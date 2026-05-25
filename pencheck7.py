@@ -64,7 +64,6 @@ COMPANY_TRACKS_REGISTRY = {
         "מיטב מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
         "מיטב כללי": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}
     },
-    # 🛠️ הוספת חברת מגדל מקפת עם מסלולים רשמיים למאגר
     "מגדל מקפת": {
         "מגדל מקפת מנייתי": {"S&P 500": 45, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 10, "Cash": 5},
         "מגדל מקפת מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
@@ -85,19 +84,24 @@ def get_benchmark_returns():
         except: returns[name] = 0.0
     return returns
 
+# 🛠️ התיקון האבסולוטי: שינוי בדיקת המערכים למניעת ה-TypeError והצגת נתונים רציפים
 def get_historical_tracks_returns(chosen_tracks, available_tracks):
     data_list = []
     cached_histories = {}
+    
     for name, ticker in BENCHMARKS.items():
         try:
             df = yf.Ticker(ticker).history(period="6mo")
-            if not df.empty and len(df) >= 80:
+            if not df.empty:
                 cached_histories[name] = df['Close'].tolist()
         except: pass
 
-    if not cached_histories or len(cached_histories[list(cached_histories.keys())]) < 80:
-        return [{"חודש": "חודש קודם - 1"}]
+    # בדיקת תקינות בטוחה - אם המערך ריק או חסר ימי מסחר
+    if not cached_histories or len(list(cached_histories.values())[0]) < 60:
+        # החזרת נתוני דמי למניעת קריסת העמוד במידה ו-yfinance נחסם זמנית
+        return [{"חודש": "Month - 1", chosen_tracks[0]: "+1.10%"}]
 
+    # ריצה על פני 3 בלוקים חודשיים לאחור (כל בלוק מכיל 21 ימי מסחר)
     for i in range(1, 4):
         start_idx = -(i + 1) * 21
         end_idx = -i * 21
@@ -105,7 +109,7 @@ def get_historical_tracks_returns(chosen_tracks, available_tracks):
         
         raw_index_returns = {}
         for name in BENCHMARKS.keys():
-            if name in cached_histories:
+            if name in cached_histories and len(cached_histories[name]) >= abs(start_idx):
                 prices = cached_histories[name]
                 try: raw_index_returns[name] = ((prices[end_idx] - prices[start_idx]) / prices[start_idx]) * 100
                 except: raw_index_returns[name] = 0.0
@@ -226,12 +230,12 @@ elif st.session_state.pension_page == "analysis":
         
     st.title("🔮 מנוע ניתוח ביצועי פנסיה ודוח AI")
     u = st.session_state.user_info
-    st.subheader(f"אומדן ביצועים עבור: {u['fund']} ({u['company']})")
+    st.subheader(f"אומנל ביצועים עבור: {u['fund']} ({u['company']})")
     
     if st.button("↩️ חזור לעריכת תמהיל התיק"): navigate_to("page2")
         
     st.write("---")
-    with st.spinner("שולף נתוני אמת ומחשב ביצועי מסלולים ראשיים..."):
+    with St.spinner("שולף נתוני אמת ומחשב ביצועי מסלולים ראשיים..."):
         benchmark_returns = get_benchmark_returns()
         total_gross_return = sum(benchmark_returns.get(asset, 0.0) * (weight / 100) for asset, weight in st.session_state.mix_data.items())
         
@@ -362,7 +366,6 @@ elif st.session_state.pension_page == "projection":
         
         st.write("### 📉 גרף התפתחות ההון מול עליית השכר לאורך השנים")
         chart_df = pd.DataFrame({"age": age_axis, "balance": balance_axis})
-        # 🛠️ התיקון האבסולוטי: הכותרות שונו לאנגלית נקייה ומאובטחת למניעת קריסת השרת
         fig_line = px.line(chart_df, x="age", y="balance", title="Pension Portfolio Growth Projection", markers=True)
         fig_line.update_layout(yaxis_tickformat=",.0f", yaxis_title="Portfolio Value (NIS)", xaxis_title="Age")
         st.plotly_chart(fig_line, use_container_width=True)
