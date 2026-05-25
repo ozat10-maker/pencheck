@@ -68,25 +68,38 @@ COMPANY_TRACKS_REGISTRY = {
 
 BENCHMARKS = {"S&P 500": "^SPX", "TA 125": "^TA125.TA", "Nasdaq 100": "^NDX", "Bonds": "AGG", "Cash": "BIL"}
 
+# 🛠️ תיקון יסודי: משיכת נתוני החודש הנוכחי מתחילתו ועד היום על בסיס היסטוריה יומית בפועל
 def get_benchmark_returns():
-    start_of_month = datetime(datetime.today().year, datetime.today().month, 1).strftime('%Y-%m-%d')
+    today = datetime.today()
+    start_of_month = datetime(today.year, today.month, 1).strftime('%Y-%m-%d')
     returns = {}
     for name, ticker in BENCHMARKS.items():
         try:
+            # משיכת היסטוריה יומית מתחילת החודש הנוכחי
             hist = yf.Ticker(ticker).history(start=start_of_month)
             if not hist.empty and len(hist) >= 2:
-                returns[name] = ((float(hist['Close'].iloc[-1]) - float(hist['Close'].iloc)) / float(hist['Close'].iloc)) * 100
-            else: returns[name] = 0.0
+                initial_price = float(hist['Close'].iloc[0])
+                current_price = float(hist['Close'].iloc[-1])
+                returns[name] = ((current_price - initial_price) / initial_price) * 100
+            else:
+                # גיבוי: אם חודש רק התחיל ואין מספיק ימי מסחר, מושכים את 5 הימים האחרונים
+                hist_backup = yf.Ticker(ticker).history(period="5d")
+                if not hist_backup.empty and len(hist_backup) >= 2:
+                    returns[name] = ((float(hist_backup['Close'].iloc[-1]) - float(hist_backup['Close'].iloc[0])) / float(hist_backup['Close'].iloc[0])) * 100
+                else: returns[name] = 0.0
         except: returns[name] = 0.0
     return returns
 
-# תיקון מנגנון שליפת ההיסטוריה על ידי משיכת טווח רחב יותר ומניעת ימי סגירת מסחר
+# 🛠️ תיקון יסודי: משיכת תשואות חודשיות היסטוריות מדויקות לפי חיתוך חודשי סגור של ימי מסחר
 def get_historical_months_returns():
     data_list = []
     today = datetime.today()
+    
+    # שליפת נתוני שוק רחבים ל-4 חודשים אחרונים כדי לחתוך אותם בצורה מדויקת
     for i in range(1, 4):
-        first_of_past = datetime(today.year, today.month, 1) - timedelta(days=i * 31)
-        start_date = datetime(first_of_past.year, first_of_past.month, 1)
+        # חישוב הגבולות של חודשי העבר
+        first_of_target_month = datetime(today.year, today.month, 1) - timedelta(days=i * 31)
+        start_date = datetime(first_of_target_month.year, first_of_target_month.month, 1)
         next_month = start_date + timedelta(days=32)
         end_date = datetime(next_month.year, next_month.month, 1) - timedelta(days=1)
         month_label = start_date.strftime('%m/%Y')
@@ -94,11 +107,14 @@ def get_historical_months_returns():
         month_data = {"חודש": month_label}
         for name, ticker in BENCHMARKS.items():
             try:
-                hist = yf.Ticker(ticker).history(start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
+                # שליפת ההיסטוריה המלאה של אותו חודש ספציפי
+                hist = yf.Ticker(ticker).history(start=start_date.strftime('%Y-%m-%d'), end=(end_date + timedelta(days=1)).strftime('%Y-%m-%d'))
                 if not hist.empty and len(hist) >= 2:
-                    month_data[name] = f"{((hist['Close'].iloc[-1] - hist['Close'].iloc) / hist['Close'].iloc) * 100:+.2f}%"
-                else: month_data[name] = "0.00%"
-            except: month_data[name] = "0.00%"
+                    month_data[name] = f"{((hist['Close'].iloc[-1] - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100:+.2f}%"
+                else:
+                    month_data[name] = "0.00%"
+            except: 
+                month_data[name] = "0.00%"
         data_list.append(month_data)
     return data_list
 
@@ -120,13 +136,13 @@ if st.session_state.pension_page == "page1":
         company_list = list(COMPANY_TRACKS_REGISTRY.keys())
         default_company_idx = company_list.index(saved_info["company"]) if "company" in saved_info else 0
         company_name = st.selectbox("שם החברה המנהלת:", company_list, index=default_company_idx)
-        user_age = st.number_input("גיל המשתמש הנוכחי:", min_value=18, max_value=100, value=saved_info.get("age", 35))
-        total_balance = st.number_input("יתרה צבורה נוכחית בש\"ח:", min_value=0, value=saved_info.get("balance", 150000), step=10000)
+        user_age = st.number_input("גיל המשתמש הנוכחי:", min_value=18, max_value=100, value=saved_info.get("age", 30))
+        total_balance = st.number_input("יתרה צבורה נוכחית בש\"ח:", min_value=0, value=saved_info.get("balance", 200000), step=10000)
     
     with col2:
         st.markdown("**💼 נתוני שכר והפקדות חודשיות:**")
         current_salary = st.number_input("משכורת חודשית נוכחית (ברוטו בש\"ח):", min_value=0, value=saved_info.get("current_salary", 15000), step=1000)
-        target_salary = st.number_input("משכורת חודשית משוערת לקראת הפרישה (בש\"ח):", min_value=0, value=saved_info.get("target_salary", 25000), step=1000)
+        target_salary = st.number_input("משכורת חודשית משוערת לקראת הפרישה (בש\"ח):", min_value=0, value=saved_info.get("target_salary", 22000), step=1000)
         suggested_deposit = int(current_salary * 0.185)
         monthly_deposit = st.number_input("סך הפקדה חודשית נוכחית לקופה (ברוטו בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", suggested_deposit), step=100)
         
@@ -199,7 +215,7 @@ elif st.session_state.pension_page == "page2":
         st.session_state.mix_data = aggregated_mix
         navigate_to("analysis")
 # =====================================================================
-# 🔮 דף 3: מנוע ניתוח ביצועי פנסיה, היסטוריה ודוח AI (מתוקן מוגן שגיאות)
+# 🔮 דף 3: מנוע ניתוח ביצועי פנסיה, היסטוריה ודוח AI
 # =====================================================================
 elif st.session_state.pension_page == "analysis":
     if not st.session_state.mix_data or not st.session_state.user_info: navigate_to("page1")
@@ -211,7 +227,7 @@ elif st.session_state.pension_page == "analysis":
     if st.button("↩️ חזור לעריכת תמהיל התיק"): navigate_to("page2")
         
     st.write("---")
-    with st.spinner("מחשב נתונים בזמן אמת והיסטוריית דיווחים..."):
+    with st.spinner("שולף נתוני אמת חיוניים מהבורסה..."):
         benchmark_returns = get_benchmark_returns()
         total_gross_return = sum(benchmark_returns.get(asset, 0.0) * (weight / 100) for asset, weight in st.session_state.mix_data.items())
         
@@ -242,9 +258,8 @@ elif st.session_state.pension_page == "analysis":
                     response = client.models.generate_content(model='gemini-2.5-flash', contents=user_context, config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.2))
                     st.markdown(response.text)
                 except Exception as e:
-                    # 🛠️ פתרון מנגנון ההגנה החכם לשגיאת 429
                     if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                        st.info("⚠️ הגעת למגבלת המכסה החינמית של מפתח ה-API של גוגל לדקה זו. המערכת מנעה קריסה. ניתן להמשיך ישירות לסימולציה למטה, או להמתין דקה ולרענן.")
+                        st.info("⚠️ הגעת למגבלת המכסה החינמית של מפתח ה-API של גוגל לדקה זו. ניתן להמשיך ישירות לסימולציה למטה.")
                     else: st.error(f"שגיאה בהפקת הדוח: {str(e)}")
                     
     if st.button("המשך לסימולציית גיל פרישה (65) 🚀", type="primary"): navigate_to("projection")
@@ -263,27 +278,48 @@ elif st.session_state.pension_page == "projection":
     else:
         salary_growth_rate = (u["target_salary"] / u["current_salary"]) ** (1 / years_to_retire) - 1 if u["target_salary"] > u["current_salary"] else 0.0
         st.info(f"💡 מודל הסימולציה מניח קידום שכר שנתי ממוצע של **{salary_growth_rate*100:.2f}%**.")
-        annual_return_input = st.number_input("הנחת תשואה שנתית ממוצעת (%):", min_value=1.0, max_value=15.0, value=6.5, step=0.5)
-        conversion_coefficient = st.number_input("מקדם המרה צפוי לקצבה:", min_value=150, max_value=250, value=200)
         
-        deposit_ratio = u["monthly_deposit"] / u["current_salary"]
-        balance, age_axis, balance_axis, salary_axis = u["balance"], [], [], []
+        annual_return_input = st.number_input("הנחת תשואה שנתית ממוצעת (%):", min_value=1.0, max_value=15.0, value=6.5, step=0.5)
+        conversion_coefficient = st.number_input("מקדם המרה צפוי לקצבה (ברירת מחדל 200):", min_value=150, max_value=250, value=200)
+        
+        deposit_ratio = u["monthly_deposit"] / u["current_salary"] if u["current_salary"] > 0 else 0.185
+        
+        balance = u["balance"]
+        fee_deposit_rate = u["fee_deposit"] / 100
+        fee_balance_rate = u["fee_balance"] / 100
+        return_rate = annual_return_input / 100
+        
+        age_axis = [u["age"]]
+        balance_axis = [round(balance)]
+        salary_axis = [round(u["current_salary"])]
         active_salary = u["current_salary"]
         
         for year in range(1, years_to_retire + 1):
             active_salary *= (1 + salary_growth_rate)
-            balance += (active_salary * deposit_ratio * 12) * (1 - (u["fee_deposit"]/100))
-            balance *= (1 + (annual_return_input/100)) * (1 - (u["fee_balance"]/100))
+            annual_deposit = (active_salary * deposit_ratio) * 12
+            net_annual_deposit = annual_deposit * (1 - fee_deposit_rate)
+            
+            balance = (balance * (1 + return_rate)) + net_annual_deposit
+            balance *= (1 - fee_balance_rate)
+            
             age_axis.append(u["age"] + year)
             balance_axis.append(round(balance))
             salary_axis.append(round(active_salary))
             
+        final_balance = balance_axis[-1]
+        estimated_pension = final_balance / conversion_coefficient
+        
         st.write("---")
-        st.subheader("📊 תוצאות שיערוך מבוסס גידול שכר דינמי")
+        st.subheader("📊 תוצאות שיערוך אקטוארי מעודכן ומאוזן")
+        
         p1, p2, p3 = st.columns(3)
         p1.metric("משכורת פרישה משוערת", f"{salary_axis[-1]:,} ₪")
-        p2.metric("סכום צבורה בפרישה", f"{balance_axis[-1]:,.0f} ₪")
-        p3.metric("קצבה חודשית צפויה", f"{balance_axis[-1] / conversion_coefficient:,.0f} ₪ / חודש")
+        p2.metric("סכום צבורה בפרישה", f"{final_balance:,.0f} ₪")
+        replacement_rate = (estimated_pension / salary_axis[-1]) * 100
+        p3.metric("קצבה חודשית צפויה", f"{estimated_pension:,.0f} ₪ / חודש", f"אחוז תחלופה מציאותי: {replacement_rate:.1f}%")
         
-        fig_line = px.line(pd.DataFrame({"גיל": age_axis, "צבורה משוערת": balance_axis}), x="גיל", y="צבורה משוערת", title="צמיחת חסכון הפנסיה המצטבר", markers=True)
+        st.write("### 📉 גרף התפתחות ההון מול עליית השכר לאורך השנים")
+        chart_df = pd.DataFrame({"גיל": age_axis, "צבורה": balance_axis})
+        fig_line = px.line(chart_df, x="גיל", y="צבורה", title="צמיחת חסכון הפנסיה המצטבר (₪)", markers=True)
+        fig_line.update_layout(yaxis_tickformat=",.0f", yaxis_title="שווי הקופה בש\"ח")
         st.plotly_chart(fig_line, use_container_width=True)
