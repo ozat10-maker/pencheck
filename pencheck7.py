@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
@@ -35,7 +35,7 @@ elif DEFAULT_GEMINI_KEY and DEFAULT_GEMINI_KEY.strip() != "":
 else:
     api_key = st.sidebar.text_input("הזן מפתח API של Gemini:", type="password")
     if not api_key:
-        st.sidebar.warning("⚠️ יש להזין מפתח API כדי לקבל את דוח ה-AI בסיום.")
+        st.sidebar.warning("⚠️ יש להזין מפתח API כדי קבל את דוח ה-AI בסיום.")
 COMPANY_TRACKS_REGISTRY = {
     "הראל פנסיה וגמל": {
         "מסלול מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
@@ -73,18 +73,24 @@ COMPANY_TRACKS_REGISTRY = {
 
 BENCHMARKS = {"S&P 500": "^SPX", "TA 125": "^TA125.TA", "Nasdaq 100": "^NDX", "Bonds": "AGG", "Cash": "BIL"}
 
+# 🛠️ תיקון הבאג: שליפת נתוני החודש הנוכחי על בסיס 21 ימי המסחר האחרונים הקיימים בשוק בפועל כדי למנוע 0.00%
 def get_benchmark_returns():
     returns = {}
     for name, ticker in BENCHMARKS.items():
         try:
-            hist = yf.Ticker(ticker).history(period="1mo")
-            if not hist.empty and len(hist) >= 2:
-                returns[name] = ((float(hist['Close'].iloc[-1]) - float(hist['Close'].iloc)) / float(hist['Close'].iloc)) * 100
-            else: returns[name] = 0.0
-        except: returns[name] = 0.0
+            # משיכת חודשיים של היסטוריה קיימת בפועל כדי לחתוך בבטחה את 21 הימים האחרונים
+            df = yf.Ticker(ticker).history(period="2mo")
+            if not df.empty and len(df) >= 21:
+                prices = df['Close'].tolist()
+                initial_price = float(prices[-21])  # מחיר תחילת בלוק המסחר החודשי
+                current_price = float(prices[-1])   # המחיר העדכני ביותר
+                returns[name] = ((current_price - initial_price) / initial_price) * 100
+            else:
+                returns[name] = 0.0
+        except:
+            returns[name] = 0.0
     return returns
 
-# 🛠️ תיקון הבאג בצילום המסך הראשון: משיכה נקייה ומאובטחת של רשימות מחירים ללא שגיאות טיפוס משתנה (TypeError)
 def get_historical_tracks_returns(chosen_tracks, available_tracks):
     data_list = []
     cached_histories = {}
@@ -96,9 +102,8 @@ def get_historical_tracks_returns(chosen_tracks, available_tracks):
                 cached_histories[name] = list(df['Close'].values)
         except: pass
 
-    # תנאי מגן מעודכן ומתוקן סינטקטית למניעת שגיאות טיפוס
-    if not cached_histories or len(list(cached_histories.values())[0]) < 80:
-        return [{"חודש": "חודש קודם - 1"}]
+    if not cached_histories or len(list(cached_histories.values())) < 1:
+        return [{"חודש": "Month - 1"}]
 
     for i in range(1, 4):
         start_idx = -(i + 1) * 21
@@ -233,7 +238,6 @@ elif st.session_state.pension_page == "analysis":
     if st.button("↩️ חזור לעריכת תמהיל התיק"): navigate_to("page2")
         
     st.write("---")
-    # 🛠️ התיקון הקריטי לצילום המסך השני: שינוי St.spinner (אות גדולה) ל-st.spinner (אות קטנה ותקנית)
     with st.spinner("שולף נתוני אמת ומחשב ביצועי מסלולים ראשיים..."):
         benchmark_returns = get_benchmark_returns()
         total_gross_return = sum(benchmark_returns.get(asset, 0.0) * (weight / 100) for asset, weight in st.session_state.mix_data.items())
@@ -366,5 +370,4 @@ elif st.session_state.pension_page == "projection":
         st.write("### 📉 גרף התפתחות ההון מול עליית השכר לאורך השנים")
         chart_df = pd.DataFrame({"age": age_axis, "balance": balance_axis})
         fig_line = px.line(chart_df, x="age", y="balance", title="Pension Portfolio Growth Projection", markers=True)
-        fig_line.update_layout(yaxis_tickformat=",.0f", yaxis_title="Portfolio Value (NIS)", xaxis_title="Age")
-        st.plotly_chart(fig_line, use_container_width=True)
+        fig_line.update_layout(yaxis_tickformat=",.0f", yaxis_title="Portfolio
