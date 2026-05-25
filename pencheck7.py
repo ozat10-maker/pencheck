@@ -80,14 +80,15 @@ def get_benchmark_returns():
         except: returns[name] = 0.0
     return returns
 
-# חישוב ביצועי חודשים קודמים
+# תיקון מנגנון שליפת ההיסטוריה על ידי משיכת טווח רחב יותר ומניעת ימי סגירת מסחר
 def get_historical_months_returns():
     data_list = []
     today = datetime.today()
-    for i in range(1, 4): # 3 חודשים אחרונים
-        first_of_past = datetime(today.year, today.month, 1) - timedelta(days=i*30)
+    for i in range(1, 4):
+        first_of_past = datetime(today.year, today.month, 1) - timedelta(days=i * 31)
         start_date = datetime(first_of_past.year, first_of_past.month, 1)
-        end_date = datetime(first_of_past.year, first_of_past.month, 28)
+        next_month = start_date + timedelta(days=32)
+        end_date = datetime(next_month.year, next_month.month, 1) - timedelta(days=1)
         month_label = start_date.strftime('%m/%Y')
         
         month_data = {"חודש": month_label}
@@ -143,7 +144,7 @@ if st.session_state.pension_page == "page1":
         }
         navigate_to("page2")
 # =====================================================================
-# 📊 דף 2: הגדרת חלוקת מסלולים משולבת ומרובה (מתוקן)
+# 📊 דף 2: הגדרת חלוקת מסלולים משולבת ומרובה
 # =====================================================================
 elif st.session_state.pension_page == "page2":
     if not st.session_state.user_info: navigate_to("page1")
@@ -153,8 +154,6 @@ elif st.session_state.pension_page == "page2":
     st.write(f"החברה המנהלת: **{selected_company}**")
     
     available_tracks = COMPANY_TRACKS_REGISTRY[selected_company]
-    
-    # 🛠️ התיקון הקריטי: הסרת הסוגריים המרובעים המיותרים ב-default למניעת השגיאה מהצילום מסך
     chosen_tracks = st.multiselect(
         "בחר את מסלולי ההשקעה הפעילים בקופה שלך:", 
         list(available_tracks.keys()), 
@@ -200,7 +199,7 @@ elif st.session_state.pension_page == "page2":
         st.session_state.mix_data = aggregated_mix
         navigate_to("analysis")
 # =====================================================================
-# 🔮 דף 3: מנוע ניתוח ביצועי פנסיה, היסטוריה ודוח AI
+# 🔮 דף 3: מנוע ניתוח ביצועי פנסיה, היסטוריה ודוח AI (מתוקן מוגן שגיאות)
 # =====================================================================
 elif st.session_state.pension_page == "analysis":
     if not st.session_state.mix_data or not st.session_state.user_info: navigate_to("page1")
@@ -226,12 +225,13 @@ elif st.session_state.pension_page == "analysis":
         m3.metric("שינוי כספי מוערך (נטו)", f"{money_change_net:+,.2f} ₪")
         m4.metric("שווי תיק מעודכן", f"{u['balance'] + money_change_net:,.2f} ₪")
         
-        # 📊 הוספת טבלת תשואות היסטוריות של חודשים קודמים
         st.write("### 📅 היסטוריית תשואות מדדי הקופה בחודשים הקודמים")
         history_data = get_historical_months_returns()
         st.dataframe(pd.DataFrame(history_data), use_container_width=True)
         
         st.write("---")
+        st.subheader("🤖 דוח ניתוח והמלצות אסטרטגיות מה-AI")
+        
         if not api_key: st.info("💡 הזן מפתח API בתפריט הצד לקבלת דוח AI.")
         else:
             with st.spinner("מנוע ה-AI מנתח את נתוני הפנסיה וההיסטוריה..."):
@@ -241,7 +241,11 @@ elif st.session_state.pension_page == "analysis":
                     client = genai.Client(api_key=api_key)
                     response = client.models.generate_content(model='gemini-2.5-flash', contents=user_context, config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.2))
                     st.markdown(response.text)
-                except Exception as e: st.error(f"שגיאה בהפקת הדוח: {str(e)}")
+                except Exception as e:
+                    # 🛠️ פתרון מנגנון ההגנה החכם לשגיאת 429
+                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                        st.info("⚠️ הגעת למגבלת המכסה החינמית של מפתח ה-API של גוגל לדקה זו. המערכת מנעה קריסה. ניתן להמשיך ישירות לסימולציה למטה, או להמתין דקה ולרענן.")
+                    else: st.error(f"שגיאה בהפקת הדוח: {str(e)}")
                     
     if st.button("המשך לסימולציית גיל פרישה (65) 🚀", type="primary"): navigate_to("projection")
 
