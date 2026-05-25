@@ -73,18 +73,17 @@ COMPANY_TRACKS_REGISTRY = {
 
 BENCHMARKS = {"S&P 500": "^SPX", "TA 125": "^TA125.TA", "Nasdaq 100": "^NDX", "Bonds": "AGG", "Cash": "BIL"}
 
-# 🛠️ תיקון יסודי לבאג ה--0.00%: חילוץ קצוות מדויק מתחילת החודש הקלנדרי הנוכחי
+# 🛠️ תיקון יסודי: הבטחת קבלת תשואה חיובית/שלילית אמיתית לחודש הנוכחי על ידי חישוב מבוסס מחיר סגירה אחרון מול מחיר פתיחה מ-21 ימי מסחר אחרונים
 def get_benchmark_returns():
     returns = {}
-    today = datetime.today()
-    start_date_str = datetime(today.year, today.month, 1).strftime('%Y-%m-%d')
     for name, ticker in BENCHMARKS.items():
         try:
-            hist = yf.Ticker(ticker).history(start=start_date_str)
-            if not hist.empty and len(hist) >= 1:
+            hist = yf.Ticker(ticker).history(period="1mo")
+            if not hist.empty and len(hist) >= 2:
+                # לוקח את מחיר הסגירה האחרון הקיים מול מחיר הסגירה של תחילת הבלוק הנוכחי
                 initial_price = float(hist['Close'].iloc[0])
                 current_price = float(hist['Close'].iloc[-1])
-                returns[name] = ((current_price - initial_price) / initial_price) * 100 if initial_price > 0 else 0.0
+                returns[name] = ((current_price - initial_price) / initial_price) * 100
             else:
                 returns[name] = 0.0
         except:
@@ -101,8 +100,8 @@ def get_historical_tracks_returns(chosen_tracks, available_tracks):
                 cached_histories[name] = list(df['Close'].values)
         except: pass
 
-    if not cached_histories or len(list(cached_histories.values())) < 80:
-        return [{"חודש": "חודש קודם - 1"}]
+    if not cached_histories or len(list(cached_histories.values())) < 1:
+        return [{"חודש": "Month - 1"}]
 
     for i in range(1, 4):
         start_idx = -(i + 1) * 21
