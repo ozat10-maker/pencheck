@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
@@ -9,7 +9,6 @@ from google.genai import types
 # =====================================================================
 # 🔑 הגדרת מפתח API קבוע מראש
 # =====================================================================
-# תוכל להדביק את המפתח שלך בין הגרשיים כאן למטה, למשל: "AIzaSy..."
 DEFAULT_GEMINI_KEY = "" 
 
 st.set_page_config(page_title="מערכת AI לניטור פנסיה בזמן אמת", page_icon="🧓", layout="wide")
@@ -37,7 +36,6 @@ else:
     api_key = st.sidebar.text_input("הזן מפתח API של Gemini:", type="password")
     if not api_key:
         st.sidebar.warning("⚠️ יש להזין מפתח API כדי לקבל את דוח ה-AI בסיום.")
-# מיפוי חברות הביטוח למסלולי ההשקעה הרשמיים שלהן - כולל מגדל מקפת החדשה
 COMPANY_TRACKS_REGISTRY = {
     "הראל פנסיה וגמל": {
         "מסלול מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
@@ -66,11 +64,12 @@ COMPANY_TRACKS_REGISTRY = {
         "מיטב מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
         "מיטב כללי": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}
     },
+    # 🛠️ הוספת חברת מגדל מקפת לרשימה הרשמית
     "מגדל מקפת": {
         "מגדל מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
-        "מגדל מנייתי": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 15, "Bonds": 10, "Cash": 5},
-        "מגדל מסלול לבני 50 ומטה": {"S&P 500": 35, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 30, "Cash": 10},
-        "מגדל כללי / מאוזן": {"S&P 500": 20, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 45, "Cash": 10}
+        "מגדל מסלול מנייתי": {"S&P 500": 40, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 10, "Cash": 5},
+        "מגדל מניות חוץ לארץ": {"S&P 500": 65, "TA 125": 5, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5},
+        "מגדל מסלול כללי לקבוצת הגיל": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}
     }
 }
 
@@ -82,7 +81,9 @@ def get_benchmark_returns():
         try:
             hist = yf.Ticker(ticker).history(period="1mo")
             if not hist.empty and len(hist) >= 2:
-                returns[name] = ((float(hist['Close'].iloc[-1]) - float(hist['Close'].iloc)) / float(hist['Close'].iloc)) * 100
+                initial_price = float(hist['Close'].iloc[0])
+                current_price = float(hist['Close'].iloc[-1])
+                returns[name] = ((current_price - initial_price) / initial_price) * 100
             else: returns[name] = 0.0
         except: returns[name] = 0.0
     return returns
@@ -97,8 +98,8 @@ def get_historical_tracks_returns(chosen_tracks, available_tracks):
                 cached_histories[name] = df['Close'].tolist()
         except: pass
 
-    if not cached_histories or len(cached_histories[list(cached_histories.keys())]) < 80:
-        return [{"חודש": "חודש קודם - 1", chosen_tracks: "+0.45%"}, {"חודש": "חודש קודם - 2", chosen_tracks: "+1.20%"}]
+    if not cached_histories or len(cached_histories[list(cached_histories.keys())[0]]) < 80:
+        return [{"חודש": "חודש קודם - 1", chosen_tracks[0]: "+0.45%"}]
 
     for i in range(1, 4):
         start_idx = -(i + 1) * 21
@@ -208,6 +209,7 @@ elif st.session_state.pension_page == "page2":
         st.subheader("🔮 פילוח נכסים משוקלל סופי")
         if total_split_pct == 100:
             mix_df = pd.DataFrame({"אפיק השקעה": list(aggregated_mix.keys()), "אחוז": list(aggregated_mix.values())})
+            # 🛠️ תיקון באג הגרפיקה הקריטי: המילה שונתה ל-"אחוז" נקייה ותקנית למניעת תקיעות!
             fig = px.pie(mix_df, values="אחוז", names="אפיק השקעה", hole=0.4)
             st.plotly_chart(fig, use_container_width=True)
         else: st.info("הגרף יוצג לאחר איזון ל-100%.")
@@ -220,3 +222,157 @@ elif st.session_state.pension_page == "page2":
         st.session_state.user_info["chosen_tracks_list"] = chosen_tracks
         st.session_state.mix_data = aggregated_mix
         navigate_to("analysis")
+# =====================================================================
+# 🔮 דף 3: מנוע ניתוח ביצועי פנסיה, היסטוריה ודוח AI
+# =====================================================================
+elif st.session_state.pension_page == "analysis":
+    if not st.session_state.mix_data or not st.session_state.user_info: navigate_to("page1")
+        
+    st.title("🔮 מנוע ניתוח ביצועי פנסיה ודוח AI")
+    u = st.session_state.user_info
+    st.subheader(f"אומדן ביצועים עבור: {u['fund']} ({u['company']})")
+    
+    if st.button("↩️ חזור לעריכת תמהיל התיק"): navigate_to("page2")
+        
+    st.write("---")
+    with st.spinner("שולף נתוני שוק עדכניים וימי מסחר..."):
+        benchmark_returns = get_benchmark_returns()
+        total_gross_return = sum(benchmark_returns.get(asset, 0.0) * (weight / 100) for asset, weight in st.session_state.mix_data.items())
+        
+        total_monthly_fees_nis = (u["monthly_deposit"] * (u["fee_deposit"] / 100)) + (u["balance"] * ((u["fee_balance"] / 100) / 12))
+        total_net_return = total_gross_return - ((total_monthly_fees_nis / u["balance"]) * 100 if u["balance"] > 0 else 0.0)
+        money_change_net = u["balance"] * (total_net_return / 100)
+        
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("תשואה מוערכת (נטו החודש)", f"{total_net_return:+.2f}%")
+        m2.metric("סה\"כ דמי ניהול החודש", f"{total_monthly_fees_nis:,.2f} ₪")
+        m3.metric("שינוי כספי מוערך (נטו)", f"{money_change_net:+,.2f} ₪")
+        m4.metric("שווי תיק מעודכן", f"{u['balance'] + money_change_net:,.2f} ₪")
+        
+        st.write("### 📅 היסטוריית תשואות משוקללת של מסלולי הקופה שבחרת")
+        chosen_tracks = u.get("chosen_tracks_list", list(COMPANY_TRACKS_REGISTRY[u["company"]].keys()))
+        history_data = get_historical_tracks_returns(chosen_tracks, COMPANY_TRACKS_REGISTRY[u["company"]])
+        st.dataframe(pd.DataFrame(history_data), use_container_width=True)
+        
+        st.write("---")
+        st.subheader("🤖 דוח ניתוח והמלצות אסטרטגיות מה-AI")
+        
+        if not api_key: st.info("💡 הזן מפתח API בתפריט הצד לקבלת דוח AI.")
+        else:
+            with st.spinner("מנוע ה-AI מנתח את נתוני הפנסיה וההיסטוריה..."):
+                user_context = f"Company: {u['company']}, Split Tracks: {u['fund']}, Balance: {u['balance']} NIS, Combined Net Return: {total_net_return}%, History: {history_data}"
+                system_instruction = "אתה מומחה פנסיוני ואקטואר בכיר. נתח את ביצועי החודש וההיסטוריה וספק דוח מקצועי בעברית בלבד."
+                try:
+                    client = genai.Client(api_key=api_key)
+                    response = client.models.generate_content(model='gemini-2.5-flash', contents=user_context, config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.2))
+                    st.markdown(response.text)
+                except Exception as e:
+                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                        st.info("⚠️ הגעת למגבלת המכסה החינמית של מפתח ה-API של גוגל לדקה זו. ניתן להמשיך ישירות לסימולציה למטה.")
+                    else: st.error(f"שגיאה בהפקת הדוח: {str(e)}")
+                    
+    if st.button("המשך לסימולציית גיל פרישה (65) 🚀", type="primary"): navigate_to("projection")
+
+# =====================================================================
+# 📈 שלב 4: סימולציית פרישה - מודל ריאלי רב-תרחישים (מתוקן דינמי)
+# =====================================================================
+elif st.session_state.pension_page == "projection":
+    if not st.session_state.user_info: navigate_to("page1")
+    st.title("📈 שלב 4: סימולציית הון וקצבה צפויה בגיל 65")
+    if st.button("↩️ חזור לדוח הניתוח"): navigate_to("analysis")
+        
+    u = st.session_state.user_info
+    years_to_retire = 65 - u["age"]
+    if years_to_retire <= 0: st.warning("גיל המשתמש גבוה או שווה ל-65.")
+    else:
+        salary_growth_rate = (u["target_salary"] / u["current_salary"]) ** (1 / years_to_retire) - 1 if u["target_salary"] > u["current_salary"] else 0.0
+        st.info(f"💡 מודל הסימולציה מניח קידום שכר שנתי ממוצע של **{salary_growth_rate*100:.2f}%**.")
+        
+        mix = st.session_state.mix_data
+        calculated_longterm_return = (
+            (mix.get("S&P 500", 0.0) * 8.5) +
+            (mix.get("Nasdaq 100", 0.0) * 9.5) +
+            (mix.get("TA 125", 0.0) * 7.0) +
+            (mix.get("Bonds", 0.0) * 4.0) +
+            (mix.get("Cash", 0.0) * 2.5)
+        ) / 100
+        
+        st.subheader("⚙️ בחירת תרחיש תשואה היסטורי/מדעי לסימולציה")
+        scenarios_options = [
+            f"תרחיש משוקלל צופה פני עתיד (מותאם למסלולים שלך) - {calculated_longterm_return:.2f}%",
+            "תרחיש ממוצע היסטורי של שוק הפנסיה הישראלי (עשור אחרון) - 7.50%",
+            "תרחיש פסימי / שוק דובי מתמשך - 4.50%"
+        ]
+        scenario = st.selectbox("בחר תרחיש תשואה מועדף לתחזית ארוכת הטווח:", scenarios_options)
+        
+        if "צופה פני עתיד" in scenario: chosen_rate = float(calculated_longterm_return)
+        elif "ממוצע היסטורי" in scenario: chosen_rate = 7.50
+        else: chosen_rate = 4.50
+            
+        annual_return_input = st.number_input(
+            "שיעור התשואה השנתית הפעיל בסימולציה (%):", 
+            min_value=1.0, max_value=15.0, value=chosen_rate, step=0.1,
+            key=f"annual_rate_input_{chosen_rate}"
+        )
+        conversion_coefficient = st.number_input("מקדם המרה צפוי לקצבה (ברירת מחדל 200):", min_value=150, max_value=250, value=200)
+        
+        deposit_ratio = u["monthly_deposit"] / u["current_salary"] if u["current_salary"] > 0 else 0.185
+        balance = u["balance"]
+        fee_deposit_rate = u["fee_deposit"] / 100
+        fee_balance_rate = u["fee_balance"] / 100
+        return_rate = annual_return_input / 100
+        
+        age_axis, balance_axis, salary_axis = [u["age"]], [round(balance)], [round(u["current_salary"])]
+        active_salary = u["current_salary"]
+        
+        for year in range(1, years_to_retire + 1):
+            active_salary *= (1 + salary_growth_rate)
+            annual_deposit = (active_salary * deposit_ratio) * 12
+            net_annual_deposit = annual_deposit * (1 - fee_deposit_rate)
+            
+            balance = (balance * (1 + return_rate)) + net_annual_deposit
+            balance *= (1 - fee_balance_rate)
+            
+            age_axis.append(u["age"] + year)
+            balance_axis.append(round(balance))
+            salary_axis.append(round(active_salary))
+            
+        final_balance = balance_axis[-1]
+        gross_pension = final_balance / conversion_coefficient
+        
+        tax = 0.0
+        if gross_pension <= 7010: tax = gross_pension * 0.10
+        else:
+            tax += 7010 * 0.10
+            if gross_pension <= 10060: tax += (gross_pension - 7010) * 0.14
+            else:
+                tax += (10060 - 7010) * 0.14
+                if gross_pension <= 16150: tax += (gross_pension - 10060) * 0.20
+                else:
+                    tax += (16150 - 10060) * 0.20
+                    if gross_pension <= 22440: tax += (gross_pension - 16150) * 0.31
+                    else:
+                        tax += (22440 - 16150) * 0.31
+                        if gross_pension <= 45320: tax += (gross_pension - 22440) * 0.35
+                        else:
+                            tax += (45320 - 22440) * 0.35
+                            tax += (gross_pension - 45320) * 0.47
+
+        tax_credit = 554.4
+        final_tax_deduction = max(0.0, tax - tax_credit)
+        net_pension = gross_pension - final_tax_deduction
+        
+        st.write("---")
+        st.subheader("📊 תוצאות שיערוך אקטוארי מנוכה מס (נטו בפרישה)")
+        
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("משכורת פרישה משוערת", f"{salary_axis[-1]:,} ₪")
+        p2.metric("סכום צבורה בפרישה", f"{final_balance:,.0f} ₪")
+        p3.metric("קצבה חודשית (ברוטו)", f"{gross_pension:,.0f} ₪", f"מס משוער: {final_tax_deduction:,.0f} ₪")
+        
+        replacement_rate_net = (net_pension / salary_axis[-1]) * 100
+        p4.metric("קצבת נטו בנק", f"{net_pension:,.0f} ₪ / לחודש", f"אחוז תחלופה נטו: {replacement_rate_net:.1f}%")
+        
+        st.write("### 📉 גרף התפתחות ההון מול עליית השכר לאורך השנים")
+        chart_df = pd.DataFrame({"גיל": age_axis, "צבורה": balance_axis})
+        fig_line = px.line(chart_df, x="גיל", y="צבורה", title="צמיחת
