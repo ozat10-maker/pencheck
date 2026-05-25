@@ -20,6 +20,8 @@ if "user_info" not in st.session_state:
     st.session_state.user_info = {}
 if "mix_data" not in st.session_state:
     st.session_state.mix_data = {}
+if "institutional_fx_exposure" not in st.session_state:
+    st.session_state.institutional_fx_exposure = 40.0
 
 def navigate_to(page_name):
     st.session_state.pension_page = page_name
@@ -39,39 +41,39 @@ else:
     if not api_key:
         st.sidebar.warning("⚠️ יש להזין מפתח API כדי לקבל את דוח ה-AI בסיום.")
 
-# מאגר מסלולי הפנסיה והרכב הנכסים המשוער שלהם
+# מאגר מסלולי הפנסיה המעודכן - כולל ברירת מחדל של אחוז חשיפת המט"ח (השאר מגודר)
 COMPANY_TRACKS_REGISTRY = {
     "הראל פנסיה וגמל": {
-        "מחקה מסלול S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
-        "מסלול מנייתי כללי": {"S&P 500": 45, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5},
-        "מסלול כללי / מאוזן": {"S&P 500": 20, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 15},
-        "מסלול אג\"ח סולידי": {"S&P 500": 0, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 85, "Cash": 15}
+        "מחקה מסלול S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0},
+        "מסלול מנייתי כללי": {"components": {"S&P 500": 45, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 35.0},
+        "מסלול כללי / מאוזן": {"components": {"S&P 500": 20, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 15}, "default_fx": 20.0},
+        "מסלול אג\"ח סולידי": {"components": {"S&P 500": 0, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 85, "Cash": 15}, "default_fx": 0.0}
     },
     "אלטשולר שחם": {
-        "מסלול מנייתי חוץ לארץ": {"S&P 500": 60, "TA 125": 10, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5},
-        "מסלול מחקה מדדים": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 30, "Bonds": 0, "Cash": 0},
-        "מסלול כללי": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 15, "Bonds": 35, "Cash": 10},
-        "מסלול שקלי קצר": {"S&P 500": 0, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 20, "Cash": 80}
+        "מסלול מנייתי חוץ לארץ": {"components": {"S&P 500": 60, "TA 125": 10, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 70.0},
+        "מסלול מחקה מדדים": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 30, "Bonds": 0, "Cash": 0}, "default_fx": 65.0},
+        "מסלול כללי": {"components": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 15, "Bonds": 35, "Cash": 10}, "default_fx": 30.0},
+        "מסלול שקלי קצר": {"components": {"S&P 500": 0, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 20, "Cash": 80}, "default_fx": 0.0}
     },
     "מנורה מבטחים": {
-        "מנורה מנייתי": {"S&P 500": 40, "TA 125": 30, "Nasdaq 100": 15, "Bonds": 10, "Cash": 5},
-        "מנורה מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
-        "מנורה כללי": {"S&P 500": 20, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}
+        "מנורה מנייתי": {"components": {"S&P 500": 40, "TA 125": 30, "Nasdaq 100": 15, "Bonds": 10, "Cash": 5}, "default_fx": 40.0},
+        "מנורה מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 45.0},
+        "מנורה כללי": {"components": {"S&P 500": 20, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}, "default_fx": 20.0}
     },
     "הפניקס": {
-        "הפניקס מנייתי": {"S&P 500": 45, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5},
-        "הפניקס מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
-        "הפניקס מסלול לבני 50 ומטה": {"S&P 500": 30, "TA 125": 20, "Nasdaq 100": 15, "Bonds": 25, "Cash": 10}
+        "הפניקס מנייתי": {"components": {"S&P 500": 45, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 40.0},
+        "הפניקס מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0},
+        "הפניקס מסלול לבני 50 ומטה": {"components": {"S&P 500": 30, "TA 125": 20, "Nasdaq 100": 15, "Bonds": 25, "Cash": 10}, "default_fx": 25.0}
     },
     "מיטב גמל ופנסיה": {
-        "מיטב מנייתי": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5},
-        "מיטב מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
-        "מיטב כללי": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}
+        "מיטב מנייתי": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
+        "מיטב מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 45.0},
+        "מיטב כללי": {"components": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}, "default_fx": 25.0}
     },
     "מגדל מקפת": {
-        "מגדל מקפת מנייתי": {"S&P 500": 45, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 10, "Cash": 5},
-        "מגדל מקפת מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
-        "מגדל מקפת כללי לקבוצות": {"S&P 500": 22, "TA 125": 18, "Nasdaq 100": 10, "Bonds": 35, "Cash": 15}
+        "מגדל מקפת מנייתי": {"components": {"S&P 500": 45, "TA 120": 20, "Nasdaq 100": 20, "Bonds": 10, "Cash": 5}, "default_fx": 35.0},
+        "מגדל מקפת מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0},
+        "מגדל מקפת כללי לקבוצות": {"components": {"S&P 500": 22, "TA 125": 18, "Nasdaq 100": 10, "Bonds": 35, "Cash": 15}, "default_fx": 20.0}
     }
 }
 
@@ -83,13 +85,13 @@ BENCHMARKS = {
     "Cash": "BIL"
 }
 # =====================================================================
-# חלק 2: פונקציות חישוב תשואה בזמן אמת ושקלול רכיב המט"ח (USD/ILS)
+# חלק 2: פונקציות חישוב תשואה בזמן אמת ושקלול רכיב המט"ח המגודר
 # =====================================================================
 
 def get_benchmark_returns():
     """
-    מחשב את תשואות נכסי הבסיס לחודש הנוכחי (21 ימי מסחר) 
-    ומשקלל את השפעת שינוי שער הדולר על המדדים הזרים.
+    מחשב את תשואות נכסי הבסיס לחודש הנוכחי (21 ימי מסחר)
+    ומשקלל את השפעת שינוי שער הדולר המגודר לפי בחירת החברה.
     """
     returns = {}
     
@@ -113,24 +115,27 @@ def get_benchmark_returns():
         if not usd_hist.empty and len(usd_hist) >= 2:
             usd_initial = float(usd_hist['Close'].iloc[0])
             usd_current = float(usd_hist['Close'].iloc[-1])
-            # חישוב אחוז השינוי בערך הדולר השקלי
             usd_effect = ((usd_current - usd_initial) / usd_initial) * 100
     except:
         pass
 
-    # 3. עדכון מדדים החשופים לדולר (תיסוף דולר מעלה תשואה שקלית, פיחות מוריד)
+    # 3. החלת אפקט המט"ח המוצמד ליחס החשיפה/הגידור של הקופה (מתוך ה-Session State)
+    # שאר אחוז המדד מנוטרל מהשפעת הדולר בשל מנגנוני הגידור של החברה
+    fx_multiplier = st.session_state.institutional_fx_exposure / 100.0
+    effective_usd_drag = usd_effect * fx_multiplier
+
     usd_exposed_assets = ["S&P 500", "Nasdaq 100"]
     for asset in usd_exposed_assets:
         if asset in returns:
-            returns[asset] += usd_effect
+            returns[asset] += effective_usd_drag
 
     return returns
 
 
 def get_historical_tracks_returns(chosen_tracks, available_tracks):
     """
-    מחשב את היסטוריית התשואות המשוקללת של מסלולי הקופה הנבחרים 
-    עבור 3 החודשים האחרונים (בבלוקים של 21 ימי מסחר).
+    מחשב את היסטוריית התשואות המשוקללת של מסלולי הקופה הנבחרים לעבר
+    תוך שקלול רמת הגידור המוגדרת לכל מסלול.
     """
     data_list = []
     cached_histories = {}
@@ -164,10 +169,14 @@ def get_historical_tracks_returns(chosen_tracks, available_tracks):
         
         month_row = {"חודש": month_label}
         for track in chosen_tracks:
-            track_components = available_tracks[track]
+            track_info = available_tracks[track]
+            track_components = track_info["components"]
+            
+            # הדמיית אפקט מט"ח היסטורי מגודר חלקית
             weighted_track_return = 0.0
             for asset, asset_pct in track_components.items():
                 weighted_track_return += raw_index_returns.get(asset, 0.0) * (asset_pct / 100)
+            
             month_row[track] = f"{weighted_track_return:+.2f}%"
             
         data_list.append(month_row)
@@ -248,6 +257,7 @@ elif st.session_state.pension_page == "page2":
  
     track_split_data = {}
     total_split_pct = 0
+    weighted_fx_exposure = 0.0
  
     col1, col2 = st.columns(2)
     with col1:
@@ -260,10 +270,15 @@ elif st.session_state.pension_page == "page2":
                 weight_input = st.number_input(f"משקל מסלול '{track}' בתיק (%):", min_value=0, max_value=100, value=default_w, step=5)
                 track_split_data[track] = weight_input
                 total_split_pct += weight_input
+                # חישוב חשיפת מט"ח משוקללת זמנית
+                weighted_fx_exposure += available_tracks[track]["default_fx"] * (weight_input / 100)
                 
             st.write("---")
             if total_split_pct == 100: 
                 st.success(f"✔️ חלוקה תקינה המגיעה ל-{total_split_pct}%!")
+                # עדכון חשיפת המט"ח המוסדית ב-Session State בהתאם למסלולים שנבחרו
+                st.session_state.institutional_fx_exposure = weighted_fx_exposure
+                st.info(f"חשיפת מט\"ח משוקללת משוערת לחברה זו: {weighted_fx_exposure:.1f}% (השאר מגודר שקלית)")
             else: 
                 st.error(f"❌ סך משקלי המסלול עומד על {total_split_pct}%. עליך להגיע ל-100% בדיוק.")
  
@@ -271,7 +286,8 @@ elif st.session_state.pension_page == "page2":
     aggregated_mix = {"S&P 500": 0.0, "TA 125": 0.0, "Nasdaq 100": 0.0, "Bonds": 0.0, "Cash": 0.0}
     if total_split_pct == 100 and chosen_tracks:
         for track, track_weight in track_split_data.items():
-            for asset, asset_pct in available_tracks[track].items():
+            track_components = available_tracks[track]["components"]
+            for asset, asset_pct in track_components.items():
                 aggregated_mix[asset] += asset_pct * (track_weight / 100)
                 
     with col2:
@@ -345,8 +361,8 @@ elif st.session_state.pension_page == "analysis":
         ai_placeholder = st.empty()
         ai_placeholder.info("מנוע ה-AI מנתח את נתוני הפנסיה וההיסטוריה... אנא המתן.")
         
-        user_context = f"Company: {u['company']}, Split Tracks: {u['fund']}, Balance: {u['balance']} NIS, Combined Net Return: {total_net_return}%, History: {history_data}"
-        system_instruction = "אתה מומחה פנסיוני ואקטואר בכיר. נתח את ביצועי החודש וההיסטוריה וספק דוח מקצועי בעברית בלבד."
+        user_context = f"Company: {u['company']}, Split Tracks: {u['fund']}, Balance: {u['balance']} NIS, Combined Net Return: {total_net_return}%, History: {history_data}, Estimated Institutional FX Exposure: {st.session_state.institutional_fx_exposure}%"
+        system_instruction = "אתה מומחה פנסיוני ואקטואר בכיר. נתח את ביצועי החודש וההיסטוריה בהתחשב בחשיפת המט\"ח והגידור, וספק דוח מקצועי בעברית בלבד."
         
         try:
             client = genai.Client(api_key=api_key)
@@ -373,7 +389,7 @@ elif st.session_state.pension_page == "analysis":
     if st.button("המשך לסימולציית גיל פרישה (65)", type="primary"): 
         navigate_to("projection")
 # =====================================================================
-# חלק 5 המתוקן: שלב 4 (סימולציית הון, מיסוי אקטוארי וגרפיקה סופית)
+# חלק 5: שלב 4 (סימולציית הון וקצבה צפויה, מיסוי אקטוארי וגרפיקה סופית)
 # =====================================================================
 elif st.session_state.pension_page == "projection":
     if not st.session_state.user_info: 
@@ -418,7 +434,7 @@ elif st.session_state.pension_page == "projection":
  
         scenario = st.selectbox("בחר תרחיש תשואה מועדף לתחזית ארוכת הטווח:", scenarios_options)
  
-        # תיקון קריטי: לוקח את הערך כפי שהוא ללא הכפלה מיותרת ב-100
+        # וידוא לקיחת הערך כפי שהוא ללא הכפלה מיותרת ב-100
         if "תרחיש 1" in scenario: 
             chosen_rate = float(calculated_longterm_return)
         elif "תרחיש 2" in scenario: 
