@@ -373,7 +373,7 @@ elif st.session_state.pension_page == "analysis":
     if st.button("המשך לסימולציית גיל פרישה (65)", type="primary"): 
         navigate_to("projection")
 # =====================================================================
-# חלק 5: שלב 4 (סימולציית הון וקצבה צפויה, מיסוי אקטוארי וגרפיקה סופית)
+# חלק 5 המתוקן: שלב 4 (סימולציית הון, מיסוי אקטוארי וגרפיקה סופית)
 # =====================================================================
 elif st.session_state.pension_page == "projection":
     if not st.session_state.user_info: 
@@ -400,7 +400,7 @@ elif st.session_state.pension_page == "projection":
  
         mix = st.session_state.mix_data
         
-        # חישוב תשואה ארוכת טווח משוקללת לפי אפיקי השקעה
+        # חישוב תשואה ארוכת טווח משוקללת לפי אפיקי השקעה (התוצאה היא כבר באחוזים, למשל 8.5)
         calculated_longterm_return = (
             (mix.get("S&P 500", 0.0) * 8.5) + 
             (mix.get("Nasdaq 100", 0.0) * 9.5) + 
@@ -411,16 +411,16 @@ elif st.session_state.pension_page == "projection":
  
         st.subheader("בחירת תרחיש תשואה היסטורי לסימולציה")
         scenarios_options = [
-            f"תרחיש 1 - תשואה משוקללת נכסים ({calculated_longterm_return * 100:.2f}%)",
+            f"תרחיש 1 - תשואה משוקללת נכסים ({calculated_longterm_return:.2f}%)",
             "תרחיש 2 - תשואה קבועה גבוהה (7.50%)",
             "תרחיש 3 - תשואה קבועה שמרנית (4.50%)"
         ]
  
         scenario = st.selectbox("בחר תרחיש תשואה מועדף לתחזית ארוכת הטווח:", scenarios_options)
  
-        # קביעת שיעור התשואה הנבחר
+        # תיקון קריטי: לוקח את הערך כפי שהוא ללא הכפלה מיותרת ב-100
         if "תרחיש 1" in scenario: 
-            chosen_rate = float(calculated_longterm_return * 100)
+            chosen_rate = float(calculated_longterm_return)
         elif "תרחיש 2" in scenario: 
             chosen_rate = 7.50
         else: 
@@ -436,7 +436,7 @@ elif st.session_state.pension_page == "projection":
             min_value=150, max_value=250, value=200
         )
  
-        # הרצת חישוב ההון קדימה לאורך השנים (הזחה מתוקנת מחוץ ללולאת התצוגה)
+        # הרצת חישוב ההון קדימה לאורך השנים
         deposit_ratio = u["monthly_deposit"] / u["current_salary"] if u["current_salary"] > 0 else 0.185
         balance = u["balance"]
         fee_deposit_rate = u["fee_deposit"] / 100
@@ -463,7 +463,7 @@ elif st.session_state.pension_page == "projection":
         final_balance = balance_axis[-1]
         gross_pension = final_balance / conversion_coefficient
  
-        # חישוב מס הכנסה פרוגרסיבי על הקצבה החודשית
+        # חישוב מס הכנסה פרוגרסיבי על הקצבה
         tax = 0.0
         if gross_pension <= 7010: 
             tax = gross_pension * 0.10
@@ -487,12 +487,11 @@ elif st.session_state.pension_page == "projection":
                             tax += (45320 - 22440) * 0.35
                             tax += (gross_pension - 45320) * 0.47
                             
-        # ניכוי נקודות זיכוי (בסיס חודשי לתושב) וחישוב נטו
         tax_credit = 554.4
         final_tax_deduction = max(0.0, tax - tax_credit)
         net_pension = gross_pension - final_tax_deduction
  
-        # הצגת התוצאות הסופיות למשתמש במדדים נפרדים
+        # תצוגת התוצאות הסופיות
         st.write("---")
         st.subheader("תוצאות שיערוך אקטוארי מנוכה מס (נטו בפרישה)")
  
@@ -504,7 +503,7 @@ elif st.session_state.pension_page == "projection":
         replacement_rate_net = (net_pension / salary_axis[-1]) * 100 if salary_axis[-1] > 0 else 0.0
         p4.metric("קצבת נטו בבנק", f"{net_pension:,.0f} ₪ / לחודש", f"אחוז תחלופה נטו: {replacement_rate_net:.1f}%")
  
-        # יצירת גרף קו להצגת התפתחות ההון לאורך השנים (כותרות באנגלית למניעת תקלות)
+        # יצירת גרף ההתפתחות
         st.write("---")
         st.write("### גרף התפתחות ההון מול עליית השכר לאורך השנים")
         
