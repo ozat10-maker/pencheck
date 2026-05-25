@@ -9,6 +9,7 @@ from google.genai import types
 # =====================================================================
 # 🔑 הגדרת מפתח API קבוע מראש
 # =====================================================================
+# תוכל להדביק את המפתח שלך בין הגרשיים כאן למטה, למשל: "AIzaSy..."
 DEFAULT_GEMINI_KEY = "" 
 
 st.set_page_config(page_title="מערכת AI לניטור פנסיה בזמן אמת", page_icon="🧓", layout="wide")
@@ -68,61 +69,51 @@ COMPANY_TRACKS_REGISTRY = {
 
 BENCHMARKS = {"S&P 500": "^SPX", "TA 125": "^TA125.TA", "Nasdaq 100": "^NDX", "Bonds": "AGG", "Cash": "BIL"}
 
-# 🛠️ תיקון יסודי: משיכת נתוני החודש הנוכחי מתחילתו ועד היום על בסיס היסטוריה יומית בפועל
 def get_benchmark_returns():
     today = datetime.today()
     start_of_month = datetime(today.year, today.month, 1).strftime('%Y-%m-%d')
     returns = {}
     for name, ticker in BENCHMARKS.items():
         try:
-            # משיכת היסטוריה יומית מתחילת החודש הנוכחי
             hist = yf.Ticker(ticker).history(start=start_of_month)
             if not hist.empty and len(hist) >= 2:
-                initial_price = float(hist['Close'].iloc[0])
-                current_price = float(hist['Close'].iloc[-1])
-                returns[name] = ((current_price - initial_price) / initial_price) * 100
+                returns[name] = ((float(hist['Close'].iloc[-1]) - float(hist['Close'].iloc)) / float(hist['Close'].iloc)) * 100
             else:
-                # גיבוי: אם חודש רק התחיל ואין מספיק ימי מסחר, מושכים את 5 הימים האחרונים
                 hist_backup = yf.Ticker(ticker).history(period="5d")
                 if not hist_backup.empty and len(hist_backup) >= 2:
-                    returns[name] = ((float(hist_backup['Close'].iloc[-1]) - float(hist_backup['Close'].iloc[0])) / float(hist_backup['Close'].iloc[0])) * 100
+                    returns[name] = ((float(hist_backup['Close'].iloc[-1]) - float(hist_backup['Close'].iloc)) / float(hist_backup['Close'].iloc)) * 100
                 else: returns[name] = 0.0
         except: returns[name] = 0.0
     return returns
 
-# 🛠️ תיקון יסודי: משיכת תשואות חודשיות היסטוריות מדויקות לפי חיתוך חודשי סגור של ימי מסחר
-def get_historical_months_returns():
+def get_historical_tracks_returns(chosen_tracks, available_tracks):
     data_list = []
     today = datetime.today()
-    
-    # שליפת נתוני שוק רחבים ל-4 חודשים אחרונים כדי לחתוך אותם בצורה מדויקת
     for i in range(1, 4):
-        # חישוב הגבולות של חודשי העבר
         first_of_target_month = datetime(today.year, today.month, 1) - timedelta(days=i * 31)
         start_date = datetime(first_of_target_month.year, first_of_target_month.month, 1)
         next_month = start_date + timedelta(days=32)
         end_date = datetime(next_month.year, next_month.month, 1) - timedelta(days=1)
         month_label = start_date.strftime('%m/%Y')
         
-        month_data = {"חודש": month_label}
+        raw_index_returns = {}
         for name, ticker in BENCHMARKS.items():
             try:
-                # שליפת ההיסטוריה המלאה של אותו חודש ספציפי
                 hist = yf.Ticker(ticker).history(start=start_date.strftime('%Y-%m-%d'), end=(end_date + timedelta(days=1)).strftime('%Y-%m-%d'))
                 if not hist.empty and len(hist) >= 2:
-                    month_data[name] = f"{((hist['Close'].iloc[-1] - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100:+.2f}%"
-                else:
-                    month_data[name] = "0.00%"
-            except: 
-                month_data[name] = "0.00%"
-        data_list.append(month_data)
+                    raw_index_returns[name] = ((hist['Close'].iloc[-1] - hist['Close'].iloc) / hist['Close'].iloc) * 100
+                else: raw_index_returns[name] = 0.0
+            except: raw_index_returns[name] = 0.0
+            
+        month_row = {"חודש": month_label}
+        for track in chosen_tracks:
+            track_components = available_tracks[track]
+            weighted_track_return = 0.0
+            for asset, asset_pct in track_components.items():
+                weighted_track_return += raw_index_returns.get(asset, 0.0) * (asset_pct / 100)
+            month_row[track] = f"{weighted_track_return:+.2f}%"
+        data_list.append(month_row)
     return data_list
-
-if st.session_state.pension_page == "page1": st.progress(25, text="שלב 1 מתוך 4: פרטי החוסך ודמי ניהול")
-elif st.session_state.pension_page == "page2": st.progress(50, text="שלב 2 מתוך 4: הגדרת חלוקת מסלולים משולבת")
-elif st.session_state.pension_page == "analysis": st.progress(75, text="שלב 3 מתוך 4: מנוע ניתוח ודוח AI")
-elif st.session_state.pension_page == "projection": st.progress(100, text="שלב 4 מתוך 4: סימולציית פרישה לגיל 65")
-st.write("---")
 # =====================================================================
 # 📋 דף 1: פרטים אישיים ודמי ניהול
 # =====================================================================
@@ -212,6 +203,7 @@ elif st.session_state.pension_page == "page2":
     if c_back.button("↩️ חזור"): navigate_to("page1")
     if c_next.button("בצע ניתוח ביצועים ודוח AI! 🚀", type="primary", disabled=(total_split_pct != 100)):
         st.session_state.user_info["fund"] = " | ".join([f"{t} ({w}%)" for t, w in track_split_data.items()])
+        st.session_state.user_info["chosen_tracks_list"] = chosen_tracks
         st.session_state.mix_data = aggregated_mix
         navigate_to("analysis")
 # =====================================================================
@@ -227,7 +219,7 @@ elif st.session_state.pension_page == "analysis":
     if st.button("↩️ חזור לעריכת תמהיל התיק"): navigate_to("page2")
         
     st.write("---")
-    with st.spinner("שולף נתוני אמת חיוניים מהבורסה..."):
+    with st.spinner("שולף נתוני אמת ומחשב ביצועי מסלולים ראשיים..."):
         benchmark_returns = get_benchmark_returns()
         total_gross_return = sum(benchmark_returns.get(asset, 0.0) * (weight / 100) for asset, weight in st.session_state.mix_data.items())
         
@@ -241,8 +233,9 @@ elif st.session_state.pension_page == "analysis":
         m3.metric("שינוי כספי מוערך (נטו)", f"{money_change_net:+,.2f} ₪")
         m4.metric("שווי תיק מעודכן", f"{u['balance'] + money_change_net:,.2f} ₪")
         
-        st.write("### 📅 היסטוריית תשואות מדדי הקופה בחודשים הקודמים")
-        history_data = get_historical_months_returns()
+        st.write("### 📅 היסטוריית תשואות משוקללת של מסלולי הקופה שבחרת")
+        chosen_tracks = u.get("chosen_tracks_list", list(COMPANY_TRACKS_REGISTRY[u["company"]].keys()))
+        history_data = get_historical_tracks_returns(chosen_tracks, COMPANY_TRACKS_REGISTRY[u["company"]])
         st.dataframe(pd.DataFrame(history_data), use_container_width=True)
         
         st.write("---")
@@ -265,7 +258,7 @@ elif st.session_state.pension_page == "analysis":
     if st.button("המשך לסימולציית גיל פרישה (65) 🚀", type="primary"): navigate_to("projection")
 
 # =====================================================================
-# 📈 שלב 4: סימולציית פרישה - שכר דינמי וריבית דריבית
+# 📈 שלב 4: סימולציית פרישה - מודל ריאלי מנוכה מס הכנסה (2026)
 # =====================================================================
 elif st.session_state.pension_page == "projection":
     if not st.session_state.user_info: navigate_to("page1")
@@ -289,9 +282,7 @@ elif st.session_state.pension_page == "projection":
         fee_balance_rate = u["fee_balance"] / 100
         return_rate = annual_return_input / 100
         
-        age_axis = [u["age"]]
-        balance_axis = [round(balance)]
-        salary_axis = [round(u["current_salary"])]
+        age_axis, balance_axis, salary_axis = [u["age"]], [round(balance)], [round(u["current_salary"])]
         active_salary = u["current_salary"]
         
         for year in range(1, years_to_retire + 1):
@@ -307,16 +298,53 @@ elif st.session_state.pension_page == "projection":
             salary_axis.append(round(active_salary))
             
         final_balance = balance_axis[-1]
-        estimated_pension = final_balance / conversion_coefficient
+        gross_pension = final_balance / conversion_coefficient
+        
+        # 🛠️ מנגנון חישוב מס הכנסה לפי מדרגות המס המעודכנות (חודשי)
+        tax = 0.0
+        # מדרגה 1: 10% עד 7,010 ₪
+        if gross_pension <= 7010:
+            tax = gross_pension * 0.10
+        else:
+            tax += 7010 * 0.10
+            # מדרגה 2: 14% מ-7,011 ₪ עד 10,060 ₪
+            if gross_pension <= 10060:
+                tax += (gross_pension - 7010) * 0.14
+            else:
+                tax += (10060 - 7010) * 0.14
+                # מדרגה 3: 20% מ-10,061 ₪ עד 16,150 ₪
+                if gross_pension <= 16150:
+                    tax += (gross_pension - 10060) * 0.20
+                else:
+                    tax += (16150 - 10060) * 0.20
+                    # מדרגה 4: 31% מ-16,151 ₪ עד 22,440 ₪
+                    if gross_pension <= 22440:
+                        tax += (gross_pension - 16150) * 0.31
+                    else:
+                        tax += (22440 - 16150) * 0.31
+                        # מדרגה 5: 35% מ-22,441 ₪ עד 45,320 ₪
+                        if gross_pension <= 45320:
+                            tax += (gross_pension - 22440) * 0.35
+                        else:
+                            tax += (45320 - 22440) * 0.35
+                            # מדרגה 6: 47% מעל 45,320 ₪
+                            tax += (gross_pension - 45320) * 0.47
+
+        # הפחתת נקודות זיכוי בסיסיות לתושב (2.2 נקודות = 554.4 ₪ לחודש)
+        tax_credit = 554.4
+        final_tax_deduction = max(0.0, tax - tax_credit)
+        net_pension = gross_pension - final_tax_deduction
         
         st.write("---")
-        st.subheader("📊 תוצאות שיערוך אקטוארי מעודכן ומאוזן")
+        st.subheader("📊 תוצאות שיערוך אקטוארי מנוכה מס (נטו בפרישה)")
         
-        p1, p2, p3 = st.columns(3)
+        p1, p2, p3, p4 = st.columns(4)
         p1.metric("משכורת פרישה משוערת", f"{salary_axis[-1]:,} ₪")
         p2.metric("סכום צבורה בפרישה", f"{final_balance:,.0f} ₪")
-        replacement_rate = (estimated_pension / salary_axis[-1]) * 100
-        p3.metric("קצבה חודשית צפויה", f"{estimated_pension:,.0f} ₪ / חודש", f"אחוז תחלופה מציאותי: {replacement_rate:.1f}%")
+        p3.metric("קצבה חודשית (ברוטו)", f"{gross_pension:,.0f} ₪", f"מס משוער: {final_tax_deduction:,.0f} ₪")
+        
+        replacement_rate_net = (net_pension / salary_axis[-1]) * 100
+        p4.metric("קצבת נטו בנק", f"{net_pension:,.0f} ₪ / לחודש", f"אחוז תחלופה נטו: {replacement_rate_net:.1f}%")
         
         st.write("### 📉 גרף התפתחות ההון מול עליית השכר לאורך השנים")
         chart_df = pd.DataFrame({"גיל": age_axis, "צבורה": balance_axis})
