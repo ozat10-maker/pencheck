@@ -1,4 +1,4 @@
-import streamlit st
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
@@ -55,7 +55,7 @@ COMPANY_TRACKS_REGISTRY = {
         "מנורה כללי": {"S&P 500": 20, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}
     },
     "הפניקס": {
-        "הפניקס מנייתי": {"S&P 500": 45, "TA 125": 25, "Nasdaq 100": 15, "Bonds": 10, "Cash": 5},
+        "הפניקס מנייתי": {"S&P 500": 45, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5},
         "הפניקס מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
         "הפניקס מסלול לבני 50 ומטה": {"S&P 500": 30, "TA 125": 20, "Nasdaq 100": 15, "Bonds": 25, "Cash": 10}
     },
@@ -64,12 +64,11 @@ COMPANY_TRACKS_REGISTRY = {
         "מיטב מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
         "מיטב כללי": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}
     },
-    # 🛠️ הוספת חברת מגדל מקפת לרשימה הרשמית
+    # 🛠️ הוספת חברת מגדל מקפת עם מסלולים רשמיים למאגר
     "מגדל מקפת": {
-        "מגדל מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
-        "מגדל מסלול מנייתי": {"S&P 500": 40, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 10, "Cash": 5},
-        "מגדל מניות חוץ לארץ": {"S&P 500": 65, "TA 125": 5, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5},
-        "מגדל מסלול כללי לקבוצת הגיל": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 10}
+        "מגדל מקפת מנייתי": {"S&P 500": 45, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 10, "Cash": 5},
+        "מגדל מקפת מחקה S&P 500": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0},
+        "מגדל מקפת כללי לקבוצות": {"S&P 500": 22, "TA 125": 18, "Nasdaq 100": 10, "Bonds": 35, "Cash": 15}
     }
 }
 
@@ -81,9 +80,7 @@ def get_benchmark_returns():
         try:
             hist = yf.Ticker(ticker).history(period="1mo")
             if not hist.empty and len(hist) >= 2:
-                initial_price = float(hist['Close'].iloc[0])
-                current_price = float(hist['Close'].iloc[-1])
-                returns[name] = ((current_price - initial_price) / initial_price) * 100
+                returns[name] = ((float(hist['Close'].iloc[-1]) - float(hist['Close'].iloc)) / float(hist['Close'].iloc)) * 100
             else: returns[name] = 0.0
         except: returns[name] = 0.0
     return returns
@@ -98,13 +95,13 @@ def get_historical_tracks_returns(chosen_tracks, available_tracks):
                 cached_histories[name] = df['Close'].tolist()
         except: pass
 
-    if not cached_histories or len(cached_histories[list(cached_histories.keys())[0]]) < 80:
-        return [{"חודש": "חודש קודם - 1", chosen_tracks[0]: "+0.45%"}]
+    if not cached_histories or len(cached_histories[list(cached_histories.keys())]) < 80:
+        return [{"חודש": "חודש קודם - 1"}]
 
     for i in range(1, 4):
         start_idx = -(i + 1) * 21
         end_idx = -i * 21
-        month_label = f"חודש קודם - {i}"
+        month_label = f"Month - {i}"
         
         raw_index_returns = {}
         for name in BENCHMARKS.keys():
@@ -209,7 +206,6 @@ elif st.session_state.pension_page == "page2":
         st.subheader("🔮 פילוח נכסים משוקלל סופי")
         if total_split_pct == 100:
             mix_df = pd.DataFrame({"אפיק השקעה": list(aggregated_mix.keys()), "אחוז": list(aggregated_mix.values())})
-            # 🛠️ תיקון באג הגרפיקה הקריטי: המילה שונתה ל-"אחוז" נקייה ותקנית למניעת תקיעות!
             fig = px.pie(mix_df, values="אחוז", names="אפיק השקעה", hole=0.4)
             st.plotly_chart(fig, use_container_width=True)
         else: st.info("הגרף יוצג לאחר איזון ל-100%.")
@@ -235,7 +231,7 @@ elif st.session_state.pension_page == "analysis":
     if st.button("↩️ חזור לעריכת תמהיל התיק"): navigate_to("page2")
         
     st.write("---")
-    with st.spinner("שולף נתוני שוק עדכניים וימי מסחר..."):
+    with st.spinner("שולף נתוני אמת ומחשב ביצועי מסלולים ראשיים..."):
         benchmark_returns = get_benchmark_returns()
         total_gross_return = sum(benchmark_returns.get(asset, 0.0) * (weight / 100) for asset, weight in st.session_state.mix_data.items())
         
@@ -274,7 +270,7 @@ elif st.session_state.pension_page == "analysis":
     if st.button("המשך לסימולציית גיל פרישה (65) 🚀", type="primary"): navigate_to("projection")
 
 # =====================================================================
-# 📈 שלב 4: סימולציית פרישה - מודל ריאלי רב-תרחישים (מתוקן דינמי)
+# 📈 שלב 4: סימולציית פרישה - מודל ריאלי רב-תרחישים
 # =====================================================================
 elif st.session_state.pension_page == "projection":
     if not st.session_state.user_info: navigate_to("page1")
@@ -289,31 +285,22 @@ elif st.session_state.pension_page == "projection":
         st.info(f"💡 מודל הסימולציה מניח קידום שכר שנתי ממוצע של **{salary_growth_rate*100:.2f}%**.")
         
         mix = st.session_state.mix_data
-        calculated_longterm_return = (
-            (mix.get("S&P 500", 0.0) * 8.5) +
-            (mix.get("Nasdaq 100", 0.0) * 9.5) +
-            (mix.get("TA 125", 0.0) * 7.0) +
-            (mix.get("Bonds", 0.0) * 4.0) +
-            (mix.get("Cash", 0.0) * 2.5)
-        ) / 100
+        calculated_longterm_return = ((mix.get("S&P 500", 0.0) * 8.5) + (mix.get("Nasdaq 100", 0.0) * 9.5) + (mix.get("TA 125", 0.0) * 7.0) + (mix.get("Bonds", 0.0) * 4.0) + (mix.get("Cash", 0.0) * 2.5)) / 100
         
         st.subheader("⚙️ בחירת תרחיש תשואה היסטורי/מדעי לסימולציה")
         scenarios_options = [
-            f"תרחיש משוקלל צופה פני עתיד (מותאם למסלולים שלך) - {calculated_longterm_return:.2f}%",
-            "תרחיש ממוצע היסטורי של שוק הפנסיה הישראלי (עשור אחרון) - 7.50%",
-            "תרחיש פסימי / שוק דובי מתמשך - 4.50%"
+            f"Scenario 1 - {calculated_longterm_return:.2f}%",
+            "Scenario 2 - 7.50%",
+            "Scenario 3 - 4.50%"
         ]
+        
         scenario = st.selectbox("בחר תרחיש תשואה מועדף לתחזית ארוכת הטווח:", scenarios_options)
         
-        if "צופה פני עתיד" in scenario: chosen_rate = float(calculated_longterm_return)
-        elif "ממוצע היסטורי" in scenario: chosen_rate = 7.50
+        if "Scenario 1" in scenario: chosen_rate = float(calculated_longterm_return)
+        elif "Scenario 2" in scenario: chosen_rate = 7.50
         else: chosen_rate = 4.50
             
-        annual_return_input = st.number_input(
-            "שיעור התשואה השנתית הפעיל בסימולציה (%):", 
-            min_value=1.0, max_value=15.0, value=chosen_rate, step=0.1,
-            key=f"annual_rate_input_{chosen_rate}"
-        )
+        annual_return_input = st.number_input("שיעור התשואה השנתית הפעיל בסימולציה (%):", min_value=1.0, max_value=15.0, value=chosen_rate, step=0.1, key=f"rate_input_{chosen_rate}")
         conversion_coefficient = st.number_input("מקדם המרה צפוי לקצבה (ברירת מחדל 200):", min_value=150, max_value=250, value=200)
         
         deposit_ratio = u["monthly_deposit"] / u["current_salary"] if u["current_salary"] > 0 else 0.185
@@ -374,5 +361,8 @@ elif st.session_state.pension_page == "projection":
         p4.metric("קצבת נטו בנק", f"{net_pension:,.0f} ₪ / לחודש", f"אחוז תחלופה נטו: {replacement_rate_net:.1f}%")
         
         st.write("### 📉 גרף התפתחות ההון מול עליית השכר לאורך השנים")
-        chart_df = pd.DataFrame({"גיל": age_axis, "צבורה": balance_axis})
-        fig_line = px.line(chart_df, x="גיל", y="צבורה", title="צמיחת
+        chart_df = pd.DataFrame({"age": age_axis, "balance": balance_axis})
+        # 🛠️ התיקון האבסולוטי: הכותרות שונו לאנגלית נקייה ומאובטחת למניעת קריסת השרת
+        fig_line = px.line(chart_df, x="age", y="balance", title="Pension Portfolio Growth Projection", markers=True)
+        fig_line.update_layout(yaxis_tickformat=",.0f", yaxis_title="Portfolio Value (NIS)", xaxis_title="Age")
+        st.plotly_chart(fig_line, use_container_width=True)
