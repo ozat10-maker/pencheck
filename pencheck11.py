@@ -2,36 +2,13 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
-import json
-import os
-import hashlib
-from google import genai
-from google.genai import types
+from datetime import datetime, timedelta
 
-# =====================================================================
-# בסיס נתונים מקומי (JSON) לניהול משתמשים
-# =====================================================================
-DB_FILE = "users_db.json"
+st.set_page_config(page_title="מערכת AI לניהול פנסיה והשתלמות", page_icon="📈", layout="wide")
 
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def save_db(db):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(db, f, ensure_ascii=False, indent=4)
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-# אתחול משתני מערכת ב-Session State
+# אתחול משתני ה-Session State לניהול המעבר בין הדפים (פתיחה ישירות בשלב 1)
 if "pension_page" not in st.session_state:
-    st.session_state.pension_page = "login"
-if "logged_in_user" not in st.session_state:
-    st.session_state.logged_in_user = None
+    st.session_state.pension_page = "page1"
 if "product_type" not in st.session_state:
     st.session_state.product_type = "קרן פנסיה"
 if "user_info" not in st.session_state:
@@ -45,9 +22,9 @@ def navigate_to(page_name):
     st.session_state.pension_page = page_name
     st.rerun()
 
-st.set_page_config(page_title="מערכת AI לניהול פנסיה והשתלמות", page_icon="🔐", layout="wide")
 st.sidebar.header("הגדרות מערכת ו-AI")
 
+# מפתח API קבוע מראש או הזנה בבר הצד
 DEFAULT_GEMINI_KEY = "" 
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -78,14 +55,13 @@ PENSION_REGISTRY = {
 }
 
 # ---------------------------------------------------------------------
-# מאגר נתונים 2: מסלולי קרנות השתלמות (מורחב ומעודכן!)
+# מאגר נתונים 2: מסלולי קרנות השתלמות
 # ---------------------------------------------------------------------
 TRAINING_FUND_REGISTRY = {
     "הראל השתלמות": {
         "הראל השתלמות מניות": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
         "הראל השתלמות מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0},
-        "הראל השתלמות כללי": {"components": {"S&P 500": 25, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0},
-        "הראל השתלמות אג\"ח": {"components": {"S&P 500": 0, "TA 125": 5, "Nasdaq 100": 0, "Bonds": 80, "Cash": 15}, "default_fx": 5.0}
+        "הראל השתלמות כללי": {"components": {"S&P 500": 25, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0}
     },
     "אלטשולר שחם השתלמות": {
         "אלטשולר השתלמות מניות": {"components": {"S&P 500": 55, "TA 125": 15, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 65.0},
@@ -95,14 +71,6 @@ TRAINING_FUND_REGISTRY = {
     "ילין לפידות השתלמות": {
         "ילין השתלמות מניות": {"components": {"S&P 500": 40, "TA 125": 35, "Nasdaq 100": 15, "Bonds": 5, "Cash": 5}, "default_fx": 35.0},
         "ילין השתלמות מסלול כללי": {"components": {"S&P 500": 18, "TA 125": 25, "Nasdaq 100": 7, "Bonds": 40, "Cash": 10}, "default_fx": 20.0}
-    },
-    "אנליסט השתלמות": {
-        "אנליסט השתלמות מניות": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 25, "Bonds": 0, "Cash": 5}, "default_fx": 50.0},
-        "אנליסט השתלמות כללי": {"components": {"S&P 500": 25, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0}
-    },
-    "מור השתלמות": {
-        "מור השתלמות מניות": {"components": {"S&P 500": 45, "TA 125": 20, "Nasdaq 100": 25, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
-        "מור השתלמות כללי": {"components": {"S&P 500": 22, "TA 125": 15, "Nasdaq 100": 13, "Bonds": 40, "Cash": 10}, "default_fx": 25.0}
     }
 }
 
@@ -114,7 +82,7 @@ BENCHMARKS = {
     "Cash": "BIL"
 }
 # =====================================================================
-# חלק 2: פונקציות חישוב תשואה בזמן אמת ושמות חודשים דינמיים בעברית
+# חלק 2: פונקציות חישוב תשואה בזמן אמת, היסטוריה וגרף יומי מצטבר
 # =====================================================================
 
 def get_benchmark_returns():
@@ -123,7 +91,6 @@ def get_benchmark_returns():
     ומשקלל את השפעת שינוי שער הדולר המגודר בהתאם.
     """
     returns = {}
-    
     today = datetime.now()
     start_of_month = datetime(today.year, today.month, 1).strftime('%Y-%m-%d')
     
@@ -149,7 +116,6 @@ def get_benchmark_returns():
     except:
         pass
 
-    # שימוש בחשיפת המט"ח המשוקללת שנשמרה ב-Session State
     fx_multiplier = st.session_state.institutional_fx_exposure / 100.0
     effective_usd_drag = usd_effect * fx_multiplier
 
@@ -161,16 +127,78 @@ def get_benchmark_returns():
     return returns
 
 
+def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
+    """
+    בונה קו תשואה יומי מצטבר (%) של תיק ההשקעות מתחילת החודש הנוכחי ועד היום
+    תוך התחשבות במשקלי המדדים ורמת גידור המט"ח של החברה.
+    """
+    today = datetime.now()
+    start_of_month = datetime(today.year, today.month, 1).strftime('%Y-%m-%d')
+    
+    daily_series = {}
+    
+    # 1. משיכת נתונים יומיים לכל המדדים
+    for name, ticker in BENCHMARKS.items():
+        try:
+            df = yf.Ticker(ticker).history(start=start_of_month)
+            if not df.empty:
+                daily_series[name] = df['Close']
+        except:
+            pass
+            
+    if not daily_series or "S&P 500" not in daily_series:
+        return pd.DataFrame()
+        
+    # סנכרון תאריכים לפי מדד ייחוס מרכזי
+    dates = daily_series["S&P 500"].index
+    portfolio_daily_cumulative = []
+    date_labels = []
+    
+    # 2. חישוב התשואה המצטברת לכל יום מסחר בחודש ביחס ליום הראשון
+    for idx, date in enumerate(dates):
+        daily_gross_return = 0.0
+        
+        # חישוב שינוי הדולר המצטבר לאותו היום
+        usd_cum_change = 0.0
+        if "Cash" in daily_series and len(daily_series["Cash"]) > idx: # אינדיקטור לדולר דרך ILS=X
+            try:
+                usd_df = yf.Ticker("ILS=X").history(start=start_of_month)
+                usd_initial = usd_df['Close'].iloc[0]
+                usd_current_day = usd_df['Close'].asof(date)
+                usd_cum_change = ((usd_current_day - usd_initial) / usd_initial) * 100
+            except:
+                pass
+                
+        effective_usd_day_drag = usd_cum_change * (fx_exposure_pct / 100.0)
+        
+        # חישוב התשואה המשוקללת של נכסי התיק לאותו היום
+        for asset, weight in mix_data.items():
+            if asset in daily_series:
+                asset_prices = daily_series[asset]
+                initial_p = asset_prices.iloc[0]
+                current_p = asset_prices.asof(date)
+                
+                asset_cum_return = ((current_p - initial_p) / initial_p) * 100
+                if asset in ["S&P 500", "Nasdaq 100"]:
+                    asset_cum_return += effective_usd_day_drag
+                    
+                daily_gross_return += asset_cum_return * (weight / 100.0)
+                
+        portfolio_daily_cumulative.append(daily_gross_return)
+        date_labels.append(date.strftime('%m-%d'))
+        
+    return pd.DataFrame({"Date": date_labels, "Return": portfolio_daily_cumulative})
+
+
 def get_historical_tracks_returns(chosen_tracks, available_tracks):
     """
-    מחשב את היסטוריית התשואות המשוקללת של המסלולים הנבחרים,
-    וממיר את כותרות החודשים לשמות החודשים הרלוונטיים בעברית.
+    מחשב את היסטוריית התשואות המשוקללת של המסלולים הנבחרים לעבר
+    בבלוקים חודשיים קבועים בעברית.
     """
     months_hebrew = {
         1: "ינואר", 2: "פברואר", 3: "מרץ", 4: "אפריל", 5: "מאי", 6: "יוני",
         7: "יולי", 8: "אוגוסט", 9: "ספטמבר", 10: "אוקטובר", 11: "נובמבר", 12: "דצמבר"
     }
-    
     data_list = []
     cached_histories = {}
     
@@ -192,7 +220,6 @@ def get_historical_tracks_returns(chosen_tracks, available_tracks):
     for i in range(1, 4):
         start_idx = -(i + 1) * 21
         end_idx = -i * 21
-        
         target_month = current_month - i
         target_year = current_year
         while target_month <= 0:
@@ -200,118 +227,45 @@ def get_historical_tracks_returns(chosen_tracks, available_tracks):
             target_year -= 1
             
         month_label = f"{months_hebrew[target_month]} {target_year}"
-        
         raw_index_returns = {}
         for name in BENCHMARKS.keys():
             if name in cached_histories:
                 prices = cached_histories[name]
-                try: 
-                    raw_index_returns[name] = ((prices[end_idx] - prices[start_idx]) / prices[start_idx]) * 100
-                except: 
-                    raw_index_returns[name] = 0.0
-            else: 
-                raw_index_returns[name] = 0.0
+                try: raw_index_returns[name] = ((prices[end_idx] - prices[start_idx]) / prices[start_idx]) * 100
+                except: raw_index_returns[name] = 0.0
+            else: raw_index_returns[name] = 0.0
         
         month_row = {"חודש": month_label}
         for track in chosen_tracks:
             if track in available_tracks:
-                track_info = available_tracks[track]
-                track_components = track_info["components"]
-                
+                track_components = available_tracks[track]["components"]
                 weighted_track_return = 0.0
                 for asset, asset_pct in track_components.items():
                     weighted_track_return += raw_index_returns.get(asset, 0.0) * (asset_pct / 100)
-                
                 month_row[track] = f"{weighted_track_return:+.2f}%"
-            
         data_list.append(month_row)
         
     return data_list
 
-# ניהול התנתקות משתמש בתפריט הצד
-if st.session_state.logged_in_user:
-    st.sidebar.write(f"שלום, **{st.session_state.logged_in_user}**")
-    if st.sidebar.button("התנתק מהמערכת"):
-        st.session_state.logged_in_user = None
-        st.session_state.user_info = {}
-        st.session_state.mix_data = {}
-        navigate_to("login")
+# הגדרת בר התקדמות עליון קבוע לפי הסטטוס הנוכחי של העמוד
+if st.session_state.pension_page == "page1": 
+    st.progress(25, text="שלב 1 מתוך 4: פרטי החוסך ומוצר")
+elif st.session_state.pension_page == "page2": 
+    st.progress(50, text="שלב 2 מתוך 4: הגדרת חלוקת מסלולים משולבת")
+elif st.session_state.pension_page == "analysis": 
+    st.progress(75, text="שלב 3 מתוך 4: מנוע ניתוח ודוח AI")
+elif st.session_state.pension_page == "projection": 
+    st.progress(100, text="שלב 4 מתוך 4: סימולציית גיל פרישה")
 
 st.write("---")
 # =====================================================================
-# חלק 3: מסכי כניסה, רישום ושלב 1 מזוקק (הסתרת שכר וגיל בהשתלמות)
+# חלק 3: שלב 1 - בחירת מוצר ונתוני קופה (כולל תאריך פתיחה להשתלמות)
 # =====================================================================
 
-# ---------------------------------------------------------------------
-# מסך התחברות (Login)
-# ---------------------------------------------------------------------
-if st.session_state.pension_page == "login":
-    st.title("🔐 כניסה למערכת AI לניהול הון")
-    
-    username = st.text_input("שם משתמש:")
-    password = st.text_input("סיסמה:", type="password")
-    
-    col1, col2 = st.columns(2)
-    if col1.button("התחבר", type="primary"):
-        db = load_db()
-        if username in db and db[username]["password"] == hash_password(password):
-            st.session_state.logged_in_user = username
-            st.session_state.user_info = db[username].get("user_info", {})
-            st.session_state.mix_data = db[username].get("mix_data", {})
-            st.session_state.product_type = db[username].get("product_type", "קרן פנסיה")
-            st.success("התחברת בהצלחה!")
-            navigate_to("page1")
-        else:
-            st.error("שם משתמש או סיסמה שגויים.")
-            
-    if col2.button("משתמש חדש? הרשם כאן"):
-        navigate_to("register")
-
-# ---------------------------------------------------------------------
-# מסך רישום (Register)
-# ---------------------------------------------------------------------
-elif st.session_state.pension_page == "register":
-    st.title("📝 הרשמה למערכת ניהול הון")
-    
-    new_username = st.text_input("בחר שם משתמש:")
-    new_email = st.text_input("כתובת אימייל:")
-    new_password = st.text_input("בחר סיסמה:", type="password")
-    confirm_password = st.text_input("אימות סיסמה:", type="password")
-    
-    col1, col2 = st.columns(2)
-    if col1.button("בצע רישום", type="primary"):
-        if not new_username or not new_email or not new_password:
-            st.error("אנא מלא את כל השדות.")
-        elif new_password != confirm_password:
-            st.error("הסיסמאות אינן תואמות.")
-        else:
-            db = load_db()
-            if new_username in db:
-                st.error("שם המשתמש כבר קיים במערכת.")
-            else:
-                db[new_username] = {
-                    "email": new_email,
-                    "password": hash_password(new_password),
-                    "user_info": {},
-                    "mix_data": {},
-                    "product_type": "קרן פנסיה"
-                }
-                save_db(db)
-                st.success("נרשמת בהצלחה! כעת ניתן להתחבר.")
-                navigate_to("login")
-                
-    if col2.button("חזור למסך הכניסה"):
-        navigate_to("login")
-
-# ---------------------------------------------------------------------
-# שלב 1: הגדרת נתוני התיק (התאמה דינמית לפנסיה / השתלמות)
-# ---------------------------------------------------------------------
-elif st.session_state.pension_page == "page1":
-    if not st.session_state.logged_in_user:
-        navigate_to("login")
-        
+if st.session_state.pension_page == "page1":
     st.title("שלב 1: בחירת מוצר ונתוני קופה")
     
+    # בחירה דינמית קבועה בראש העמוד בין פנסיה להשתלמות
     product_options = ["קרן פנסיה", "קרן השתלמות"]
     saved_product = st.session_state.get("product_type", "קרן פנסיה")
     default_product_idx = product_options.index(saved_product) if saved_product in product_options else 0
@@ -331,11 +285,14 @@ elif st.session_state.pension_page == "page1":
         default_company_idx = company_list.index(saved_info["company"]) if "company" in saved_info and saved_info["company"] in company_list else 0
         company_name = st.selectbox("שם החברה המנהלת:", company_list, index=default_company_idx)
         
-        # שדה הגיל מוצג רק בקרן פנסיה לצורך חישוב אקטוארי לפרישה
         if product_type == "קרן פנסיה":
             user_age = st.number_input("גיל המשתמש הנוכחי:", min_value=18, max_value=100, value=saved_info.get("age", 30))
+            fund_start_date = None
         else:
-            user_age = 30  # ערך פנימי קבוע להשתלמות, לא מוצג במסך
+            user_age = 30  # ערך פנימי קבוע להשתלמות
+            # פיצ'ר חדש: הזנת תאריך פתיחת הקופה לחישוב נזילות מדויק של 6 שנים
+            default_date = saved_info.get("start_date", datetime.now() - timedelta(days=365*3)) # ברירת מחדל לפני 3 שנים
+            fund_start_date = st.date_input("תאריך תחילת ההפקדות (פתיחת הקופה):", value=default_date)
             
         total_balance = st.number_input("יתרה צבורה נוכחית בחשבון (גודל הקופה בש\"ח):", min_value=0, value=saved_info.get("balance", 100000), step=10000)
  
@@ -348,12 +305,11 @@ elif st.session_state.pension_page == "page1":
             deposit_monthly = st.number_input("סך הפקדה חודשית נוכחית לקופה (ברוטו בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", suggested_deposit), step=100)
         else:
             st.markdown("**נתוני הפקדות לקרן השתלמות:**")
-            # בהשתלמות מזינים רק הפקדה חודשית ישירה ללא שדות שכר ועתיד
             deposit_monthly = st.number_input("סך הפקדה חודשית משולבת לקופה (עובד + מעביד בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", 1500), step=100)
             current_salary = 0.0
             salary_target = 0.0
  
-        st.markdown("**דמי ניהול נוכחיים (רלוונטי לשני המוצרים):**")
+        st.markdown("**דמי ניהול נוכחיים:**")
         sub_c1, sub_c2 = st.columns(2)
         default_fee_dep = 0.0 if product_type == "קרן השתלמות" else 1.5
         default_fee_bal = 0.50 if product_type == "קרן השתלמות" else 0.22
@@ -366,24 +322,21 @@ elif st.session_state.pension_page == "page1":
         st.session_state.user_info = {
             "company": company_name, "age": user_age, "balance": total_balance,
             "current_salary": current_salary, "target_salary": salary_target,
-            "monthly_deposit": deposit_monthly, "fee_deposit": fee_from_deposit, "fee_balance": fee_from_balance
+            "monthly_deposit": deposit_monthly, "fee_deposit": fee_from_deposit, "fee_balance": fee_from_balance,
+            "start_date": fund_start_date
         }
         navigate_to("page2")
 # =====================================================================
-# חלק 4: שלב 2 דינמי (פילוח מסלולים ושמירה) ותחילת שלב 3
+# חלק 4: שלב 2 (פילוח מסלולים) ושלב 3 (מטריקות וגרף תשואה יומי מצטבר)
 # =====================================================================
 
 elif st.session_state.pension_page == "page2":
-    if not st.session_state.logged_in_user:
-        navigate_to("login")
- 
     selected_company = st.session_state.user_info["company"]
     product_type = st.session_state.product_type
     
     st.title("שלב 2: הגדרת חלוקת מסלולים משולבת")
     st.write(f"סוג קופה: **{product_type}** | חברה מנהלת: **{selected_company}**")
  
-    # טעינת מאגר המסלולים המתאים לפי סוג המוצר הנבחר
     if product_type == "קרן פנסיה":
         available_tracks = PENSION_REGISTRY[selected_company]
     else:
@@ -420,7 +373,6 @@ elif st.session_state.pension_page == "page2":
             else: 
                 st.error(f"❌ סך משקלי המסלול עומד על {total_split_pct}%. עליך להגיע ל-100% בדיוק.")
  
-    # חישוב תמהיל נכסים משוקלל סופי
     aggregated_mix = {"S&P 500": 0.0, "TA 125": 0.0, "Nasdaq 100": 0.0, "Bonds": 0.0, "Cash": 0.0}
     if total_split_pct == 100 and chosen_tracks:
         for track, track_weight in track_split_data.items():
@@ -445,24 +397,14 @@ elif st.session_state.pension_page == "page2":
         st.session_state.user_info["fund"] = " | ".join([f"{t} ({w}%)" for t, w in track_split_data.items()])
         st.session_state.user_info["chosen_tracks_list"] = chosen_tracks
         st.session_state.mix_data = aggregated_mix
-        
-        # שמירת פרופיל המשתמש המלא כולל סוג המוצר הפיננסי הנוכחי
-        db = load_db()
-        current_user = st.session_state.logged_in_user
-        if current_user in db:
-            db[current_user]["user_info"] = st.session_state.user_info
-            db[current_user]["mix_data"] = st.session_state.mix_data
-            db[current_user]["product_type"] = product_type
-            save_db(db)
-            
         navigate_to("analysis")
 
 # ---------------------------------------------------------------------
-# דף 3: מנוע ניתוח ביצועי פנסיה/השתלמות ודוח AI
+# דף 3: מנוע ניתוח ביצועי קופה וגרף יומי מצטבר
 # ---------------------------------------------------------------------
 elif st.session_state.pension_page == "analysis":
-    if not st.session_state.logged_in_user or not st.session_state.mix_data: 
-        navigate_to("login")
+    if not st.session_state.mix_data: 
+        navigate_to("page1")
  
     product_type = st.session_state.product_type
     st.title(f"AI מנוע ניתוח ביצועי {product_type} ודוח")
@@ -484,11 +426,6 @@ elif st.session_state.pension_page == "analysis":
         except Exception as calc_error:
             st.error(f"שגיאה בחישוב הנתונים: {str(calc_error)}")
             total_net_return, total_monthly_fees_nis, money_change_net = 0.0, 0.0, 0.0
-# =====================================================================
-# חלק 5: שלב 3 (המשך תצוגה וטבלה בעברית) ושלב 4 (סימולציה דינמית)
-# =====================================================================
-
-    product_type = st.session_state.product_type
 
     # תצוגת המטריקות לחודש הנוכחי
     m1, m2, m3, m4 = st.columns(4)
@@ -497,6 +434,29 @@ elif st.session_state.pension_page == "analysis":
     m3.metric("שינוי כספי מוערך (נטו)", f"{money_change_net:+,.2f} ₪")
     m4.metric("שווי תיק מעודכן", f"{u['balance'] + money_change_net:,.2f} ₪")
  
+    # פיצ'ר חדש: הפקת תצוגה של גרף התשואה היומית המצטברת מתחילת החודש
+    st.write("---")
+    st.write("### 📈 גרף התפתחות התשואה היומית המצטברת מתחילת החודש ועד היום (%)")
+    with st.spinner("מייצר גרף ביצועים יומי..."):
+        daily_chart_df = get_daily_returns_chart_data(st.session_state.mix_data, st.session_state.institutional_fx_exposure)
+        if not daily_chart_df.empty:
+            fig_daily_perf = px.line(
+                daily_chart_df, x="Date", y="Return", 
+                title="Portfolio Cumulative Performance (Month-to-Date)", markers=True
+            )
+            fig_daily_perf.update_layout(
+                yaxis_title="Cumulative Return (%)", xaxis_title="Date (MM-DD)",
+                yaxis_tickformat="+.2f%"
+            )
+            st.plotly_chart(fig_daily_perf, use_container_width=True)
+        else:
+            st.info("נתוני מסחר יומיים אינם זמינים כעת בגלל סוף שבוע או בעיית תקשורת.")
+# =====================================================================
+# חלק 5 א': שלב 3 - הצגת טבלה היסטורית והפקת דוח AI
+# =====================================================================
+
+    product_type = st.session_state.product_type
+
     st.write("### היסטוריית תשואות משוקללת של מסלולי הקופה שבחרת")
     try:
         if product_type == "קרן פנסיה":
@@ -520,7 +480,7 @@ elif st.session_state.pension_page == "analysis":
         ai_placeholder.info("מנוע ה-AI מנתח את נתוני הקופה וההיסטוריה... אנא המתן.")
         
         user_context = f"Product: {product_type}, Company: {u['company']}, Split Tracks: {u['fund']}, Balance: {u['balance']} NIS, Combined Net Return: {total_net_return}%, History: {history_data}, Estimated Institutional FX Exposure: {st.session_state.institutional_fx_exposure}%"
-        system_instruction = f"אתה מומחה פיננסי ואקטואר בכיר. נתח את ביצועי החודש וההיסטוריה של {product_type} זו בהתחשב בחשיפת המט\"ח והגידור, וספק דוח מקצועי בעברית בלבד."
+        system_instruction = f"אתה מומחה פיננסי בכיר. נתח את ביצועי החודש וההיסטוריה של {product_type} זו בהתחשב בחשיפת המט\"ח והגידור החודשי, וספק דוח מקצועי בעברית בלבד."
         
         try:
             client = genai.Client(api_key=api_key)
@@ -542,17 +502,13 @@ elif st.session_state.pension_page == "analysis":
                 st.error(f"שגיאה בהפקת הדוח: {str(e)}")
  
     st.write("---")
-    label_btn = "המשך לסימולציית גיל פרישה (65)" if product_type == "קרן פנסיה" else "המשך לסימולציית הון ל-6 שנים (נזילות)"
+    label_btn = "המשך לסימולציית גיל פרישה (65)" if product_type == "קרן פנסיה" else "המשך לסימולציית נזילות הון מותאמת תאריך"
     if st.button(label_btn, type="primary"): 
         navigate_to("projection")
-
-# ---------------------------------------------------------------------
-# דף 4: סימולציית הון צפויה (מותאמת אישית לפנסיה או השתלמות)
-# ---------------------------------------------------------------------
+# =====================================================================
+# חלק 6: שלב 4 - סימולציית הון צפויה (מותאמת אישית לפנסיה או השתלמות)
+# =====================================================================
 elif st.session_state.pension_page == "projection":
-    if not st.session_state.logged_in_user or not st.session_state.user_info: 
-        navigate_to("login")
-        
     product_type = st.session_state.product_type
     st.title(f"שלב 4: סימולציית הון ותחזית צמיחה לטווח ארוך")
     
@@ -561,17 +517,35 @@ elif st.session_state.pension_page == "projection":
  
     u = st.session_state.user_info
     
-    # הגדרת טווח השנים לפי סוג המוצר
+    # חישוב דינמי של טווח השנים לפי סוג המוצר ותאריך פתיחה
     if product_type == "קרן פנסיה":
         years_to_simulate = 65 - u["age"]
         title_target = "תוצאות שיערוך אקטוארי מנוכה מס (נטו בפרישה)"
     else:
-        years_to_simulate = 6  
-        title_target = "תוצאות שיערוך הון פטור ממס (נזילות מלאה לאחר 6 שנים)"
+        start_date = u.get("start_date")
+        if start_date:
+            if isinstance(start_date, str):
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            
+            today_date = datetime.now().date()
+            months_passed = (today_date.year - start_date.year) * 12 + (today_date.month - start_date.month)
+            months_to_liquidity = max(0, 72 - months_passed) # 72 חודשים = 6 שנים לקבלת נזילות
+            years_to_simulate = round(months_to_liquidity / 12, 2)
+            
+            if years_to_simulate > 0:
+                st.success(f"📅 הקופה נפתחה ב-{start_date.strftime('%d/%m/%Y')}. נותרו עוד כ-{months_to_liquidity} חודשים ({years_to_simulate} שנים) עד לנזילות מלאה פטורה ממס.")
+            else:
+                st.success(f"🎉 הקופה ותיקה ונזילה לחלוטין! (פתחת אותה לפני יותר מ-6 שנים). הסימולציה מציגה צפי צמיחה ל-6 השנים הבאות.")
+                years_to_simulate = 6
+        else:
+            years_to_simulate = 6
+            
+        title_target = "תוצאות שיערוך הון פטור ממס בנקודת הנזילות המלאה"
  
     if years_to_simulate <= 0: 
-        st.warning("גיל המשתמש הנוכחי גבוה או שווה ליעד הסימולציה.")
+        st.warning("היעד הושג. נתוני הסימולציה אינם יכולים לרוץ לאחור.")
     else:
+        # חישוב שיעור גידול השכר השנתי (רק לפנסיה)
         if product_type == "קרן פנסיה" and u["target_salary"] > u["current_salary"]:
             salary_growth_rate = (u["target_salary"] / u["current_salary"]) ** (1 / years_to_simulate) - 1
         else:
@@ -598,12 +572,9 @@ elif st.session_state.pension_page == "projection":
  
         scenario = st.selectbox("בחר תרחיש תשואה מועדף לתחזית ארוכת הטווח:", scenarios_options)
  
-        if "תרחיש 1" in scenario: 
-            chosen_rate = float(calculated_longterm_return)
-        elif "תרחיש 2" in scenario: 
-            chosen_rate = 7.50
-        else: 
-            chosen_rate = 4.50
+        if "תרחיש 1" in scenario: chosen_rate = float(calculated_longterm_return)
+        elif "תרחיש 2" in scenario: chosen_rate = 7.50
+        else: chosen_rate = 4.50
  
         annual_return_input = st.number_input(
             "שיעור התשואה השנתית הפעיל בסימולציה (%):", 
@@ -613,18 +584,20 @@ elif st.session_state.pension_page == "projection":
         if product_type == "קרן פנסיה":
             conversion_coefficient = st.number_input("מקדם המרה צפוי לקצבה (ברירת מחדל 200):", min_value=150, max_value=250, value=200)
  
-        # הרצת חישוב ההון קדימה לאורך השנים
+        # הרצת חישוב ההון קדימה לאורך טווח השנים הדינמי שחושב
         balance = u["balance"]
         fee_deposit_rate = u["fee_deposit"] / 100
         fee_balance_rate = u["fee_balance"] / 100
         return_rate = annual_return_input / 100
  
-        age_axis = [u["age"]]
+        age_axis = [u["age"]] if product_type == "קרן פנסיה" else [0]
         balance_axis = [round(balance)]
         salary_axis = [round(u["current_salary"])]
         active_salary = u["current_salary"]
  
-        for year in range(1, years_to_simulate + 1):
+        # עיגול כלפי מעלה של השנים לצורך ריצה נכונה בלולאה קלנדרית
+        loop_years = int(years_to_simulate + 0.99)
+        for year in range(1, loop_years + 1):
             active_salary *= (1 + salary_growth_rate)
             annual_deposit = u["monthly_deposit"] * 12
             net_annual_deposit = annual_deposit * (1 - fee_deposit_rate)
@@ -632,7 +605,11 @@ elif st.session_state.pension_page == "projection":
             balance = (balance * (1 + return_rate)) + net_annual_deposit
             balance *= (1 - fee_balance_rate)
  
-            age_axis.append(u["age"] + year)
+            if product_type == "קרן פנסיה":
+                age_axis.append(u["age"] + year)
+            else:
+                age_axis.append(year)
+                
             balance_axis.append(round(balance))
             salary_axis.append(round(active_salary))
  
@@ -673,14 +650,15 @@ elif st.session_state.pension_page == "projection":
         else:
             p1, p2, p3 = st.columns(3)
             p1.metric("סכום התחלתי בקופה", f"{u['balance']:,} ₪")
-            p2.metric("סכום צבור סופי (6 שנים)", f"{final_balance:,.0f} ₪")
-            total_net_profit = final_balance - u['balance'] - (u['monthly_deposit'] * 12 * 6)
+            p2.metric("סכום צבור סופי משוער", f"{final_balance:,.0f} ₪")
+            total_net_profit = final_balance - u['balance'] - (u['monthly_deposit'] * 12 * years_to_simulate)
             p3.metric("רווח נקי משוער (פטור ממס)", f"{max(0.0, total_net_profit):+,.0f} ₪")
  
         st.write("---")
-        st.write("### גרף התפתחות ההון מול עליית השכר לאורך השנים")
+        st.write("### גרף התפתחות ההון לאורך השנים בסימולציה")
         
-        chart_df = pd.DataFrame({"age": age_axis, "balance": balance_axis})
-        fig_line = px.line(chart_df, x="age", y="balance", title=f"{product_type} Growth Projection", markers=True)
-        fig_line.update_layout(yaxis_tickformat=",.0f", yaxis_title="Portfolio Value (NIS)", xaxis_title="Age / Timeline")
+        chart_df = pd.DataFrame({"Timeline": age_axis, "balance": balance_axis})
+        x_label = "Age" if product_type == "קרן פנסיה" else "Years from Today"
+        fig_line = px.line(chart_df, x="Timeline", y="balance", title=f"{product_type} Growth Projection", markers=True)
+        fig_line.update_layout(yaxis_tickformat=",.0f", yaxis_title="Portfolio Value (NIS)", xaxis_title=x_label)
         st.plotly_chart(fig_line, use_container_width=True)
