@@ -27,13 +27,13 @@ def save_db(db):
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-# אתחול משתני מערכת ב-Session State (כולל תמיכה בסוג הקופה הנבחרת)
+# אתחול משתני מערכת ב-Session State
 if "pension_page" not in st.session_state:
     st.session_state.pension_page = "login"
 if "logged_in_user" not in st.session_state:
     st.session_state.logged_in_user = None
 if "product_type" not in st.session_state:
-    st.session_state.product_type = "קרן פנסיה"  # ערך ברירת מחדל
+    st.session_state.product_type = "קרן פנסיה"
 if "user_info" not in st.session_state:
     st.session_state.user_info = {}
 if "mix_data" not in st.session_state:
@@ -78,11 +78,18 @@ PENSION_REGISTRY = {
 }
 
 # ---------------------------------------------------------------------
-# מאגר נתונים 2: מסלולי קרנות השתלמות (חדש!)
+# מאגר נתונים 2: מסלולי קרנות השתלמות (מורחב ומעודכן!)
 # ---------------------------------------------------------------------
 TRAINING_FUND_REGISTRY = {
+    "הראל השתלמות": {
+        "הראל השתלמות מניות": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
+        "הראל השתלמות מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0},
+        "הראל השתלמות כללי": {"components": {"S&P 500": 25, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0},
+        "הראל השתלמות אג\"ח": {"components": {"S&P 500": 0, "TA 125": 5, "Nasdaq 100": 0, "Bonds": 80, "Cash": 15}, "default_fx": 5.0}
+    },
     "אלטשולר שחם השתלמות": {
         "אלטשולר השתלמות מניות": {"components": {"S&P 500": 55, "TA 125": 15, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 65.0},
+        "אלטשולר השתלמות מחקה מדדים": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 30, "Bonds": 0, "Cash": 0}, "default_fx": 60.0},
         "אלטשולר השתלמות כללי": {"components": {"S&P 500": 28, "TA 125": 18, "Nasdaq 100": 14, "Bonds": 30, "Cash": 10}, "default_fx": 35.0}
     },
     "ילין לפידות השתלמות": {
@@ -232,7 +239,7 @@ if st.session_state.logged_in_user:
 
 st.write("---")
 # =====================================================================
-# חלק 3: מסכי כניסה, רישום ושלב 1 דינמי (פנסיה / השתלמות)
+# חלק 3: מסכי כניסה, רישום ושלב 1 מזוקק (הסתרת שכר וגיל בהשתלמות)
 # =====================================================================
 
 # ---------------------------------------------------------------------
@@ -297,7 +304,7 @@ elif st.session_state.pension_page == "register":
         navigate_to("login")
 
 # ---------------------------------------------------------------------
-# שלב 1: הגדרת נתוני התיק (פנסיה או השתלמות)
+# שלב 1: הגדרת נתוני התיק (התאמה דינמית לפנסיה / השתלמות)
 # ---------------------------------------------------------------------
 elif st.session_state.pension_page == "page1":
     if not st.session_state.logged_in_user:
@@ -305,7 +312,6 @@ elif st.session_state.pension_page == "page1":
         
     st.title("שלב 1: בחירת מוצר ונתוני קופה")
     
-    # הוספת הבחירה הדינמית בראש העמוד בין פנסיה להשתלמות
     product_options = ["קרן פנסיה", "קרן השתלמות"]
     saved_product = st.session_state.get("product_type", "קרן פנסיה")
     default_product_idx = product_options.index(saved_product) if saved_product in product_options else 0
@@ -313,12 +319,9 @@ elif st.session_state.pension_page == "page1":
     product_type = st.radio("בחר את סוג המוצר הפיננסי לניתוח:", product_options, index=default_product_idx, horizontal=True)
     st.session_state.product_type = product_type
     
-    st.write(f"הזנת נתונים עבור: **{product_type}**")
-    
     saved_info = st.session_state.user_info
     col1, col2 = st.columns(2)
     
-    # התאמת רשימת החברות המנהלות לפי סוג המוצר הנבחר
     if product_type == "קרן פנסיה":
         company_list = list(PENSION_REGISTRY.keys())
     else:
@@ -327,8 +330,14 @@ elif st.session_state.pension_page == "page1":
     with col1:
         default_company_idx = company_list.index(saved_info["company"]) if "company" in saved_info and saved_info["company"] in company_list else 0
         company_name = st.selectbox("שם החברה המנהלת:", company_list, index=default_company_idx)
-        user_age = st.number_input("גיל המשתמש הנוכחי:", min_value=18, max_value=100, value=saved_info.get("age", 30))
-        total_balance = st.number_input("יתרה צבורה נוכחית בחשבון (ש\"ח):", min_value=0, value=saved_info.get("balance", 100000), step=10000)
+        
+        # שדה הגיל מוצג רק בקרן פנסיה לצורך חישוב אקטוארי לפרישה
+        if product_type == "קרן פנסיה":
+            user_age = st.number_input("גיל המשתמש הנוכחי:", min_value=18, max_value=100, value=saved_info.get("age", 30))
+        else:
+            user_age = 30  # ערך פנימי קבוע להשתלמות, לא מוצג במסך
+            
+        total_balance = st.number_input("יתרה צבורה נוכחית בחשבון (גודל הקופה בש\"ח):", min_value=0, value=saved_info.get("balance", 100000), step=10000)
  
     with col2:
         if product_type == "קרן פנסיה":
@@ -339,15 +348,13 @@ elif st.session_state.pension_page == "page1":
             deposit_monthly = st.number_input("סך הפקדה חודשית נוכחית לקופה (ברוטו בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", suggested_deposit), step=100)
         else:
             st.markdown("**נתוני הפקדות לקרן השתלמות:**")
-            # שדות מותאמים אישית לקרן השתלמות (ללא שכר יעד אקטוארי)
-            current_salary = st.number_input("משכורת חודשית ברוטו לחישוב (ש\"ח):", min_value=0, value=saved_info.get("current_salary", 15000), step=1000)
-            salary_target = 0.0  # לא רלוונטי להשתלמות
-            suggested_deposit = int(current_salary * 0.10)  # ברירת מחדל 10% עובד ומעביד יחד
-            deposit_monthly = st.number_input("סך הפקדה חודשית משולבת (עובד + מעביד בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", suggested_deposit), step=100)
+            # בהשתלמות מזינים רק הפקדה חודשית ישירה ללא שדות שכר ועתיד
+            deposit_monthly = st.number_input("סך הפקדה חודשית משולבת לקופה (עובד + מעביד בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", 1500), step=100)
+            current_salary = 0.0
+            salary_target = 0.0
  
-        st.markdown("**דמי ניהול נוכחיים:**")
+        st.markdown("**דמי ניהול נוכחיים (רלוונטי לשני המוצרים):**")
         sub_c1, sub_c2 = st.columns(2)
-        # קרנות השתלמות לרוב אינן גובות דמי ניהול מהפקדה, נטען 0 כברירת מחדל להשתלמות
         default_fee_dep = 0.0 if product_type == "קרן השתלמות" else 1.5
         default_fee_bal = 0.50 if product_type == "קרן השתלמות" else 0.22
         
@@ -554,18 +561,17 @@ elif st.session_state.pension_page == "projection":
  
     u = st.session_state.user_info
     
-    # הגדרת טווח השנים לפי סוג המוצר (עד גיל 65 לפנסיה, או 6 שנים קדימה לנזילות בהשתלמות)
+    # הגדרת טווח השנים לפי סוג המוצר
     if product_type == "קרן פנסיה":
         years_to_simulate = 65 - u["age"]
         title_target = "תוצאות שיערוך אקטוארי מנוכה מס (נטו בפרישה)"
     else:
-        years_to_simulate = 6  # תקופת הנזילות המינימלית הסטנדרטית לקרן השתלמות
+        years_to_simulate = 6  
         title_target = "תוצאות שיערוך הון פטור ממס (נזילות מלאה לאחר 6 שנים)"
  
     if years_to_simulate <= 0: 
         st.warning("גיל המשתמש הנוכחי גבוה או שווה ליעד הסימולציה.")
     else:
-        # חישוב שיעור גידול השכר השנתי (רלוונטי רק לפנסיה)
         if product_type == "קרן פנסיה" and u["target_salary"] > u["current_salary"]:
             salary_growth_rate = (u["target_salary"] / u["current_salary"]) ** (1 / years_to_simulate) - 1
         else:
@@ -608,7 +614,6 @@ elif st.session_state.pension_page == "projection":
             conversion_coefficient = st.number_input("מקדם המרה צפוי לקצבה (ברירת מחדל 200):", min_value=150, max_value=250, value=200)
  
         # הרצת חישוב ההון קדימה לאורך השנים
-        deposit_ratio = u["monthly_deposit"] / u["current_salary"] if u["current_salary"] > 0 else 0.10
         balance = u["balance"]
         fee_deposit_rate = u["fee_deposit"] / 100
         fee_balance_rate = u["fee_balance"] / 100
@@ -621,7 +626,7 @@ elif st.session_state.pension_page == "projection":
  
         for year in range(1, years_to_simulate + 1):
             active_salary *= (1 + salary_growth_rate)
-            annual_deposit = (active_salary * deposit_ratio) * 12
+            annual_deposit = u["monthly_deposit"] * 12
             net_annual_deposit = annual_deposit * (1 - fee_deposit_rate)
  
             balance = (balance * (1 + return_rate)) + net_annual_deposit
@@ -633,13 +638,11 @@ elif st.session_state.pension_page == "projection":
  
         final_balance = balance_axis[-1]
  
-        # הצגת נתונים ומסכים ייעודיים בהתאם לסוג המוצר הפיננסי הפעיל
         st.write("---")
         st.subheader(title_target)
  
         if product_type == "קרן פנסיה":
             gross_pension = final_balance / conversion_coefficient
-            # חישוב מס פרוגרסיבי לקצבה פנסיונית
             tax = 0.0
             if gross_pension <= 7010: tax = gross_pension * 0.10
             else:
@@ -668,7 +671,6 @@ elif st.session_state.pension_page == "projection":
             p3.metric("חודשית קצבה (ברוטו)", f"{gross_pension:,.0f} ₪", f"משוער מס: {final_tax_deduction:,.0f} ₪")
             p4.metric("קצבת נטו בבנק", f"{net_pension:,.0f} ₪ / לחודש", f"אחוז תחלופה נטו: {replacement_rate_net:.1f}%")
         else:
-            # תצוגה מותאמת לקרן השתלמות (פטורה ממס עד לתקרת ההפקדות ללא קצבה)
             p1, p2, p3 = st.columns(3)
             p1.metric("סכום התחלתי בקופה", f"{u['balance']:,} ₪")
             p2.metric("סכום צבור סופי (6 שנים)", f"{final_balance:,.0f} ₪")
