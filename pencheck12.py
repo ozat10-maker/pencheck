@@ -201,8 +201,40 @@ elif st.session_state.pension_page == "projection":
     st.progress(100, text="שלב 4 מתוך 4: סימולציית גיל פרישה וצמיחה")
 st.write("---")
 # =====================================================================
-# מאגר נתונים 3: מסלולי קופות גמל להשקעה בישראל
+# מאגרי נתונים קומפקטיים ומאוזנים: פנסיה, השתלמות וגמל להשקעה
 # =====================================================================
+PENSION_REGISTRY = {
+    "הראל פנסיה": {
+        "מסלול מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0},
+        "מסלול מנייתי כללי": {"components": {"S&P 500": 45, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 35.0},
+        "מסלול כללי / מאוזן": {"components": {"S&P 500": 20, "TA 125": 15, "Nasdaq 100": 10, "Bonds": 40, "Cash": 15}, "default_fx": 20.0}
+    },
+    "אלטשולר שחם פנסיה": {
+        "מסלול מחקה מדדים": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 30, "Bonds": 0, "Cash": 0}, "default_fx": 65.0},
+        "מסלול כללי": {"components": {"S&P 500": 25, "TA 125": 15, "Nasdaq 100": 15, "Bonds": 35, "Cash": 10}, "default_fx": 30.0}
+    },
+    "הפניקס פנסיה": {
+        "הפניקס מנייתי": {"components": {"S&P 500": 45, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 40.0},
+        "הפניקס מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0}
+    }
+}
+
+TRAINING_FUND_REGISTRY = {
+    "הראל השתלמות": {
+        "הראל השתלמות מניות": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
+        "הראל השתלמות מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0},
+        "הראל השתלמות כללי": {"components": {"S&P 500": 25, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0}
+    },
+    "אלטשולר שחם השתלמות": {
+        "אלטשולר השתלמות מניות": {"components": {"S&P 500": 55, "TA 125": 15, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 65.0},
+        "אלטשולר השתלמות כללי": {"components": {"S&P 500": 28, "TA 125": 18, "Nasdaq 100": 14, "Bonds": 30, "Cash": 10}, "default_fx": 35.0}
+    },
+    "ילין לפידות השתלמות": {
+        "ילין השתלמות מניות": {"components": {"S&P 500": 40, "TA 125": 35, "Nasdaq 100": 15, "Bonds": 5, "Cash": 5}, "default_fx": 35.0},
+        "ילין מסלול השתלמות כללי": {"components": {"S&P 500": 18, "TA 125": 25, "Nasdaq 100": 7, "Bonds": 40, "Cash": 10}, "default_fx": 20.0}
+    }
+}
+
 INVESTMENT_PROVIDENT_REGISTRY = {
     "אנליסט גמל להשקעה": {
         "מסלול מניות": {"components": {"S&P 500": 55, "TA 125": 20, "Nasdaq 100": 25, "Bonds": 0, "Cash": 0}, "default_fx": 55.0},
@@ -226,8 +258,9 @@ INVESTMENT_PROVIDENT_REGISTRY = {
         "מסלול עוקב מדדים": {"components": {"S&P 500": 50, "TA 125": 15, "Nasdaq 100": 35, "Bonds": 0, "Cash": 0}, "default_fx": 60.0}
     }
 }
+
 # =====================================================================
-# חלק 3: שלב 1 - בחירת מוצר ונתוני קופה
+# שלב 1 - בחירת מוצר ונתוני קופה
 # =====================================================================
 if st.session_state.pension_page == "page1":
     st.title("שלב 1: בחירת מוצר ונתוני קופה")
@@ -307,7 +340,7 @@ if st.session_state.pension_page == "page1":
         }
         navigate_to("page2")
 # =====================================================================
-# חלק 4: שלב 2 - הגדרת חלוקת מסלולים משולבת
+# שלב 2 - הגדרת חלוקת מסלולים משולבת
 # =====================================================================
 elif st.session_state.pension_page == "page2":
     selected_company = st.session_state.user_info["company"]
@@ -380,7 +413,7 @@ elif st.session_state.pension_page == "page2":
         st.session_state.mix_data = aggregated_mix
         navigate_to("analysis")
 # =====================================================================
-# חלק 5: דף 3 - מנוע ניתוח ביצועי קופה ודוח AI בזמן אמת
+# שלב 3 - מנוע ניתוח ביצועי קופה ודוח AI בזמן אמת
 # =====================================================================
 elif st.session_state.pension_page == "analysis":
     if not st.session_state.mix_data: 
@@ -433,7 +466,6 @@ elif st.session_state.pension_page == "analysis":
             st.plotly_chart(fig_daily_perf, use_container_width=True)
         else:
             st.info("נתוני מסחר יומיים אינם זמינים כעת בגלל סוף שבוע או בעיית תקשורת.")
-            
     st.write("### היסטוריית תשואות משוקללת של מסלולי הקופה שבחרת")
     try:
         if product_type == "קרן פנסיה":
@@ -502,7 +534,7 @@ elif st.session_state.pension_page == "analysis":
     if st.button(btn_label, type="primary"): 
         navigate_to("projection")
 # =====================================================================
-# חלק 6: שלב 4 - סימולציית הון ותחזית צמיחה לטווח ארוך
+# שלב 4 - סימולציית הון ותחזית צמיחה לטווח ארוך
 # =====================================================================
 elif st.session_state.pension_page == "projection":
     product_type = st.session_state.product_type
@@ -586,7 +618,7 @@ elif st.session_state.pension_page == "projection":
         fee_balance_rate = u["fee_balance"] / 100
         return_rate = annual_return_input / 100
         
-        age_axis = [u["age"]] if product_type == "קרן פנסיה" else [0]
+        age_axis = [u["age"] if product_type == "קרן פנסיה" else 0]
         balance_axis = [round(balance)]
         salary_axis = [round(u["current_salary"])]
         active_salary = u["current_salary"]
