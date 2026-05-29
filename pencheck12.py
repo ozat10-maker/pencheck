@@ -6,9 +6,9 @@ from google import genai
 from google.genai import types
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="מערכת AI לניהול פנסיה, השתלמות וגמל", page_icon="📊", layout="wide")
+st.set_page_config(page_title="מערכת לניהול פנסיה, השתלמות וגמל", page_icon="📊", layout="wide")
 
-# אתחול משתני ה-Session State לניהול המעבר בין הדפים
+# אתחול משתני ה-Session State לניהול המעבר הדינמי בין הדפים
 if "pension_page" not in st.session_state:
     st.session_state.pension_page = "page1"
 if "product_type" not in st.session_state:
@@ -24,6 +24,7 @@ def navigate_to(page_name):
     st.session_state.pension_page = page_name
     st.rerun()
 
+# ניהול מפתח ה-API של Gemini בתפריט הצד
 st.sidebar.header("⚙️ הגדרות ומערכת AI")
 DEFAULT_GEMINI_KEY = "" 
 
@@ -43,7 +44,6 @@ BENCHMARKS = {
     "Bonds": "AGG", 
     "Cash": "BIL"
 }
-
 def get_benchmark_returns():
     """מחשב את תשואות נכסי הבסיס מה-1 לחודש הנוכחי ועד היום ומשקלל שינויי מטבע"""
     returns = {}
@@ -82,7 +82,7 @@ def get_benchmark_returns():
     return returns
 
 def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
-    """בונה קו תשואה יומי מצטבר מתחילת החודש על בסיס משקלי הנכסים וחשיפת המט\"ח"""
+    """בונה קו תשואה יומי מצטבר מדויק מתחילת החודש הנוכחי בלבד"""
     today = datetime.now()
     start_of_month = datetime(today.year, today.month, 1).strftime('%Y-%m-%d')
     daily_series = {}
@@ -102,17 +102,22 @@ def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
     portfolio_daily_cumulative = []
     date_labels = []
     
-    for idx, date in enumerate(dates):
+    usd_series = pd.Series(dtype='float64')
+    try:
+        usd_df = yf.Ticker("ILS=X").history(start=start_of_month)
+        if not usd_df.empty:
+            usd_series = usd_df['Close']
+    except:
+        pass
+
+    for date in dates:
         daily_gross_return = 0.0
         usd_cum_change = 0.0
-        try:
-            usd_df = yf.Ticker("ILS=X").history(start=start_of_month)
-            if not usd_df.empty:
-                usd_initial = usd_df['Close'].iloc[0]
-                usd_current_day = usd_df['Close'].asof(date)
-                usd_cum_change = ((usd_current_day - usd_initial) / usd_initial) * 100
-        except:
-            pass
+        
+        if not usd_series.empty:
+            usd_initial = usd_series.iloc[0]
+            usd_current_day = usd_series.asof(date)
+            usd_cum_change = ((usd_current_day - usd_initial) / usd_initial) * 100
             
         effective_usd_day_drag = usd_cum_change * (fx_exposure_pct / 100.0)
         
@@ -134,69 +139,58 @@ def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
     return pd.DataFrame({"Date": date_labels, "Return": portfolio_daily_cumulative})
 
 def get_historical_tracks_returns(chosen_tracks, available_tracks):
-    """מחשב היסטוריית תשואות חודשיות לאחור משוקללת לפי מסלולים"""
+    """מחשב תשואות היסטוריות קלנדריות מדויקות לפי חודשים קלנדריים סגורים"""
     months_hebrew = {
         1: "ינואר", 2: "פברואר", 3: "מרץ", 4: "אפריל", 5: "מאי", 6: "יוני",
         7: "יולי", 8: "אוגוסט", 9: "ספטמבר", 10: "אוקטובר", 11: "נובמבר", 12: "דצמבר"
     }
     data_list = []
-    cached_histories = {}
-    
-    for name, ticker in BENCHMARKS.items():
-        try:
-            df = yf.Ticker(ticker).history(period="6mo")
-            if not df.empty and len(df) >= 80:
-                cached_histories[name] = list(df['Close'].values)
-        except: 
-            pass
-            
-    if not cached_histories or len(list(cached_histories.values())) < 1:
-        return [{"חודש": "חודש קודם"}]
-        
     today = datetime.now()
-    current_year = today.year
-    current_month = today.month
     
     for i in range(1, 4):
-        start_idx = -(i + 1) * 21
-        end_idx = -i * 21
-        target_month = current_month - i
-        target_year = current_year
-        while target_month <= 0:
-            target_month += 12
-            target_year -= 1
-            
-        month_label = f"{months_hebrew[target_month]} {target_year}"
+        first_day_current_month = datetime(today.year, today.month, 1)
+        end_of_target_month = first_day_current_month - timedelta(days=1) if i == 1 else datetime(data_list[-1]["_year"], data_list[-1]["_month"], 1) - timedelta(days=1)
+        start_of_target_month = datetime(end_of_target_month.year, end_of_target_month.month, 1)
+        
+        start_str = start_of_target_month.strftime('%Y-%m-%d')
+        end_str = (end_of_target_month + timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        month_label = f"{months_hebrew[start_of_target_month.month]} {start_of_target_month.year}"
         raw_index_returns = {}
-        for name in BENCHMARKS.keys():
-            if name in cached_histories:
-                prices = cached_histories[name]
-                try:
-                    raw_index_returns[name] = ((prices[end_idx] - prices[start_idx]) / prices[start_idx]) * 100
-                except:
+        
+        for name, ticker in BENCHMARKS.items():
+            try:
+                hist = yf.Ticker(ticker).history(start=start_str, end=end_str)
+                if not hist.empty and len(hist) >= 2:
+                    p_start = float(hist['Close'].iloc[0])
+                    p_end = float(hist['Close'].iloc[-1])
+                    raw_index_returns[name] = ((p_end - p_start) / p_start) * 100
+                else:
                     raw_index_returns[name] = 0.0
-            else:
+            except:
                 raw_index_returns[name] = 0.0
                 
-        month_row = {"חודש": month_label}
+        month_row = {"חודש": month_label, "_month": start_of_target_month.month, "_year": start_of_target_month.year}
         for track in chosen_tracks:
             if track in available_tracks:
                 track_components = available_tracks[track]["components"]
-                weighted_track_return = 0.0
-                for asset, asset_pct in track_components.items():
-                    weighted_track_return += raw_index_returns.get(asset, 0.0) * (asset_pct / 100)
+                weighted_track_return = sum(raw_index_returns.get(asset, 0.0) * (asset_pct / 100) for asset, asset_pct in track_components.items())
                 month_row[track] = f"{weighted_track_return:+.2f}%"
         data_list.append(month_row)
         
+    for row in data_list:
+        row.pop("_month", None)
+        row.pop("_year", None)
+        
     return data_list
 
-# הגדרת בר התקדמות עליון קבוע לפי הסטטוס הנוכחי של העמוד
+# בר התקדמות עליון קבוע לפי הסטטוס הנוכחי של העמוד
 if st.session_state.pension_page == "page1": 
     st.progress(25, text="שלב 1 מתוך 4: פרטי החוסך ומוצר")
 elif st.session_state.pension_page == "page2": 
     st.progress(50, text="שלב 2 מתוך 4: הגדרת חלוקת מסלולים משולבת")
 elif st.session_state.pension_page == "analysis": 
-    st.progress(75, text="שלב 3 מתוך 4: מנוע ניתוח ודוח AI")
+    st.progress(75, text="שלב 3 מתוך 4: מנוע ניתוח ביצועים")
 elif st.session_state.pension_page == "projection": 
     st.progress(100, text="שלב 4 מתוך 4: סימולציית גיל פרישה וצמיחה")
 st.write("---")
@@ -258,7 +252,6 @@ INVESTMENT_PROVIDENT_REGISTRY = {
         "מסלול עוקב מדדים": {"components": {"S&P 500": 50, "TA 125": 15, "Nasdaq 100": 35, "Bonds": 0, "Cash": 0}, "default_fx": 60.0}
     }
 }
-
 # =====================================================================
 # שלב 1 - בחירת מוצר ונתוני קופה
 # =====================================================================
@@ -412,6 +405,7 @@ elif st.session_state.pension_page == "page2":
         st.session_state.user_info["chosen_tracks_list"] = chosen_tracks
         st.session_state.mix_data = aggregated_mix
         navigate_to("analysis")
+
 # =====================================================================
 # שלב 3 - מנוע ניתוח ביצועי קופה ודוח AI בזמן אמת
 # =====================================================================
@@ -420,7 +414,7 @@ elif st.session_state.pension_page == "analysis":
         navigate_to("page1")
         
     product_type = st.session_state.product_type
-    st.title(f"מנוע ניתוח ביצועי {product_type} ודוח AI")
+    st.title(f"מנוע ניתוח ביצועי {product_type}")
     
     u = st.session_state.user_info
     st.subheader(f"אומדן ביצועים עבור: {u['fund']} ({u['company']})")
@@ -466,7 +460,8 @@ elif st.session_state.pension_page == "analysis":
             st.plotly_chart(fig_daily_perf, use_container_width=True)
         else:
             st.info("נתוני מסחר יומיים אינם זמינים כעת בגלל סוף שבוע או בעיית תקשורת.")
-    st.write("### היסטוריית תשואות משוקללת של מסלולי הקופה שבחרת")
+            
+    st.write("### היסטוריית תשואות משוקללת של מסלולי הקופה (3 חודשים סגורים אחרונים)")
     try:
         if product_type == "קרן פנסיה":
             available_registry = PENSION_REGISTRY[u["company"]]
@@ -483,46 +478,47 @@ elif st.session_state.pension_page == "analysis":
     except Exception as hist_error:
         st.warning("⚠️ לא ניתן היה לטעון את נתוני ההיסטוריה מ-Yahoo Finance.")
         history_data = []
-        
+
     st.write("---")
-    st.subheader("🤖 דוח ניתוח והמלצות אסטרטגיות מה-AI")
+    st.subheader("🤖 ניתוח מומחה מבוסס בינה מלאכותית")
     
-    if not api_key: 
-        st.info("🔑 אנא הזן מפתח API בתפריט הצד לקבלת דוח AI.")
-    else:
-        ai_placeholder = st.empty()
-        ai_placeholder.info("⏳ מנוע ה-AI מנתח את נתוני הקופה וההיסטוריה... אנא המתן")
-        
-        user_context = (
-            f"Product: {product_type}, Company: {u['company']}, Split Tracks: {u['fund']}, "
-            f"Balance: {u['balance']} NIS, Combined Net Return: {total_net_return:.2f}%, History: {history_data}, "
-            f"Estimated Institutional FX Exposure: {st.session_state.institutional_fx_exposure}%"
-        )
-        
-        system_instruction = (
-            f"אתה מומחה פיננסי בכיר ומנהל השקעות ישראלי. נתח את ביצועי החודש וההיסטוריה של מוצר החיסכון: {product_type}. "
-            f"התייחס ספציפית לתמהיל הנכסים, דמי הניהול שנבחרו, והשפעת חשיפת המט''ח/הגידור השקלי שחושבה (ILS=X). "
-            f"ספק דוח מקצועי, חד, ומנומק היטב המיועד לחוסך. הדוח חייב להיכתב בשפה העברית בלבד ובמבנה קריא עם בולטים."
-        )
-        
-        try:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model='gemini-2.5-flash', 
-                contents=user_context, 
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction, 
-                    temperature=0.2
-                )
+    if st.button("🤖 הפק דוח ניתוח והמלצות אסטרטגיות מה-AI", type="secondary"):
+        if not api_key:
+            st.warning("🔑 אנא הזן מפתח API בתפריט הצד על מנת לאפשר את הפקת הדוח.")
+        else:
+            ai_placeholder = st.empty()
+            ai_placeholder.info("⏳ מנוע ה-AI (Gemini 2.5) מנתח את נתוני הקופה וההיסטוריה... אנא המתן")
+            
+            user_context = (
+                f"Product: {product_type}, Company: {u['company']}, Split Tracks: {u['fund']}, "
+                f"Balance: {u['balance']} NIS, Combined Net Return: {total_net_return:.2f}%, History: {history_data}, "
+                f"Estimated Institutional FX Exposure: {st.session_state.institutional_fx_exposure}%"
             )
-            ai_placeholder.markdown(response.text)
-        except Exception as e:
-            ai_placeholder.empty()
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                st.warning("⚠️ הגעת למגבלת המכסה החינמית של מפתח ה-API של גוגל לדקה זו. ניתן להמשיך ישירות לסימולציה למטה.")
-            else: 
-                st.error(f"❌ שגיאה בהפקת הדוח: {str(e)}")
-                
+            
+            system_instruction = (
+                f"אתה מומחה פיננסי בכיר ומנהל השקעות ישראלי. נתח את ביצועי החודש וההיסטוריה של מוצר החיסכון: {product_type}. "
+                f"התייחס ספציפית לתמהיל הנכסים, דמי הניהול שנבחרו, והשפעת חשיפת המט''ח/הגידור השקלי שחושבה (ILS=X). "
+                f"ספק דוח מקצועי, חד, ומנומק היטב המיועד לחוסך. הדוח חייב להיכתב בשפה העברית בלבד ובמבנה קריא עם בולטים."
+            )
+            
+            try:
+                client = genai.Client(api_key=api_key)
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash', 
+                    contents=user_context, 
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction, 
+                        temperature=0.2
+                    )
+                )
+                ai_placeholder.markdown(response.text)
+            except Exception as e:
+                ai_placeholder.empty()
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    st.warning("⚠️ הגעת למגבלת המכסה החינמית של גוגל לדקה זו. אנא נסה שוב בעוד מספר רגעים.")
+                else: 
+                    st.error(f"❌ שגיאה בהפקת הדוח: {str(e)}")
+                    
     st.write("---")
     if product_type == "קרן פנסיה":
         btn_label = "המשך לסימולציית גיל פרישה (שנת 65)"
