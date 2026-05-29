@@ -82,14 +82,14 @@ def get_benchmark_returns():
     return returns
 
 def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
-    """בונה קו תשואה יומי מצטבר מדויק מתחילת החודש הנוכחי בלבד"""
+    """מתוקן סופית: מושך חודש שלם ומסנן באופן קשיח רק ימים מה-1 לחודש הנוכחי ומעלה"""
     today = datetime.now()
-    start_of_month = datetime(today.year, today.month, 1).strftime('%Y-%m-%d')
+    first_of_this_month = datetime(today.year, today.month, 1).date()
     daily_series = {}
     
     for name, ticker in BENCHMARKS.items():
         try:
-            df = yf.Ticker(ticker).history(start=start_of_month)
+            df = yf.Ticker(ticker).history(period="1mo")
             if not df.empty:
                 daily_series[name] = df['Close']
         except:
@@ -98,40 +98,53 @@ def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
     if not daily_series or "S&P 500" not in daily_series:
         return pd.DataFrame()
         
-    dates = daily_series["S&P 500"].index
+    all_dates = daily_series["S&P 500"].index
+    filtered_dates = [d for d in all_dates if d.date() >= first_of_this_month]
+    
+    if not filtered_dates:
+        return pd.DataFrame()
+        
     portfolio_daily_cumulative = []
     date_labels = []
     
     usd_series = pd.Series(dtype='float64')
     try:
-        usd_df = yf.Ticker("ILS=X").history(start=start_of_month)
+        usd_df = yf.Ticker("ILS=X").history(period="1mo")
         if not usd_df.empty:
             usd_series = usd_df['Close']
     except:
         pass
 
-    for date in dates:
+    first_valid_date = filtered_dates[0]
+
+    for date in filtered_dates:
         daily_gross_return = 0.0
         usd_cum_change = 0.0
         
         if not usd_series.empty:
-            usd_initial = usd_series.iloc[0]
-            usd_current_day = usd_series.asof(date)
-            usd_cum_change = ((usd_current_day - usd_initial) / usd_initial) * 100
+            try:
+                usd_initial = usd_series.asof(first_valid_date)
+                usd_current_day = usd_series.asof(date)
+                usd_cum_change = ((usd_current_day - usd_initial) / usd_initial) * 100
+            except:
+                usd_cum_change = 0.0
             
         effective_usd_day_drag = usd_cum_change * (fx_exposure_pct / 100.0)
         
         for asset, weight in mix_data.items():
             if asset in daily_series:
                 asset_prices = daily_series[asset]
-                initial_p = asset_prices.iloc[0]
-                current_p = asset_prices.asof(date)
-                
-                asset_cum_return = ((current_p - initial_p) / initial_p) * 100
-                if asset in ["S&P 500", "Nasdaq 100"]:
-                    asset_cum_return += effective_usd_day_drag
+                try:
+                    initial_p = asset_prices.asof(first_valid_date)
+                    current_p = asset_prices.asof(date)
                     
-                daily_gross_return += asset_cum_return * (weight / 100.0)
+                    asset_cum_return = ((current_p - initial_p) / initial_p) * 100
+                    if asset in ["S&P 500", "Nasdaq 100"]:
+                        asset_cum_return += effective_usd_day_drag
+                        
+                    daily_gross_return += asset_cum_return * (weight / 100.0)
+                except:
+                    pass
                 
         portfolio_daily_cumulative.append(daily_gross_return)
         date_labels.append(date.strftime('%m-%d'))
@@ -253,7 +266,7 @@ INVESTMENT_PROVIDENT_REGISTRY = {
     }
 }
 # =====================================================================
-# שלב 1 - בחירת מוצר ונתוני קופה
+# שלב 1 - בחירת מוצר ונתוני קופה (מתוקן למניעת שגיאות טיפוסי מספרים)
 # =====================================================================
 if st.session_state.pension_page == "page1":
     st.title("שלב 1: בחירת מוצר ונתוני קופה")
@@ -280,28 +293,36 @@ if st.session_state.pension_page == "page1":
         company_name = st.selectbox("שם החברה המנהלת:", company_list, index=default_company_idx)
         
         if product_type == "קרן פנסיה":
-            user_age = st.number_input("גיל המשתמש הנוכחי:", min_value=18, max_value=100, value=saved_info.get("age", 30))
+            user_age = float(saved_info.get("age", 30))
+            user_age = st.number_input("גיל המשתמש הנוכחי:", min_value=18.0, max_value=100.0, value=user_age, step=1.0)
             fund_start_date = None
         elif product_type == "קרן השתלמות":
-            user_age = 30
+            user_age = 30.0
             default_date = saved_info.get("start_date", datetime.now() - timedelta(days=365*3))
             fund_start_date = st.date_input("תאריך תחילת ההפקדות (פתיחת הקופה):", value=default_date)
         else:
-            user_age = 30
+            user_age = 30.0
             fund_start_date = None
             
-        total_balance = st.number_input("יתרה צבורה בתחילת החודש (ש\"ח):", min_value=0, value=saved_info.get("balance", 100000), step=10000)
+        default_bal = float(saved_info.get("balance", 100000))
+        total_balance = st.number_input("יתרה צבורה בתחילת החודש (ש\"ח):", min_value=0.0, value=default_bal, step=1000.0)
 
     with col2:
         if product_type == "קרן פנסיה":
             st.markdown("**נתוני שכר והפקדות חודשיות**")
-            current_salary = st.number_input("משכורת חודשית ברוטו נוכחית (בש\"ח):", min_value=0, value=saved_info.get("current_salary", 15000), step=1000)
-            target_salary = st.number_input("משכורת חודשית משוערת לקראת הפרישה (בש\"ח):", min_value=0, value=saved_info.get("target_salary", 22000), step=1000)
-            suggested_deposit = int(current_salary * 0.185)
-            monthly_deposit = st.number_input("סך הפקדה חודשית נוכחית לקופה (ברוטו בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", suggested_deposit), step=100)
+            default_curr_sal = float(saved_info.get("current_salary", 15000))
+            default_targ_sal = float(saved_info.get("target_salary", 22000))
+            
+            current_salary = st.number_input("משכורת חודשית ברוטו נוכחית (בש\"ח):", min_value=0.0, value=default_curr_sal, step=1000.0)
+            target_salary = st.number_input("משכורת חודשית משוערת לקראת הפרישה (בש\"ח):", min_value=0.0, value=default_targ_sal, step=1000.0)
+            
+            suggested_deposit = float(current_salary * 0.185)
+            default_mon_dep = float(saved_info.get("monthly_deposit", suggested_deposit))
+            monthly_deposit = st.number_input("סך הפקדה חודשית נוכחית לקופה (ברוטו בש\"ח):", min_value=0.0, value=default_mon_dep, step=100.0)
         elif product_type == "קרן השתלמות":
             st.markdown("**נתוני הפקדות לקרן השתלמות**")
-            monthly_deposit = st.number_input("סך הפקדה חודשית משולבת לקופה (עובד + מעביד בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", 1500), step=100)
+            default_mon_dep = float(saved_info.get("monthly_deposit", 1500))
+            monthly_deposit = st.number_input("סך הפקדה חודשית משולבת לקופה (עובד + מעביד בש\"ח):", min_value=0.0, value=default_mon_dep, step=100.0)
             current_salary = 0.0
             target_salary = 0.0
         else:
@@ -320,15 +341,15 @@ if st.session_state.pension_page == "page1":
             default_fee_dep = 0.0 if product_type == "קרן השתלמות" else 1.5
             default_fee_bal = 0.50 if product_type == "קרן השתלמות" else 0.22
             
-        fee_from_deposit = sub_c1.number_input("דמי ניהול מהפקדה (%):", min_value=0.0, max_value=6.0, value=saved_info.get("fee_deposit", default_fee_dep), step=0.1, disabled=(product_type == "קופת גמל להשקעה"))
-        fee_from_balance = sub_c2.number_input("דמי ניהול שנתיים מצבירה (%):", min_value=0.0, max_value=2.0, value=saved_info.get("fee_balance", default_fee_bal), step=0.01)
+        fee_from_deposit = sub_c1.number_input("דמי ניהול מהפקדה (%):", min_value=0.0, max_value=6.0, value=float(saved_info.get("fee_deposit", default_fee_dep)), step=0.1, disabled=(product_type == "קופת גמל להשקעה"))
+        fee_from_balance = sub_c2.number_input("דמי ניהול שנתיים מצבירה (%):", min_value=0.0, max_value=2.0, value=float(saved_info.get("fee_balance", default_fee_bal)), step=0.01)
 
     st.write("---")
     if st.button("המשך לבחירת מסלולי ההשקעה", type="primary"):
         st.session_state.user_info = {
-            "company": company_name, "age": user_age, "balance": total_balance,
-            "current_salary": current_salary, "target_salary": target_salary,
-            "monthly_deposit": monthly_deposit, "fee_deposit": fee_from_deposit, "fee_balance": fee_from_balance,
+            "company": company_name, "age": int(user_age), "balance": float(total_balance),
+            "current_salary": float(current_salary), "target_salary": float(target_salary),
+            "monthly_deposit": float(monthly_deposit), "fee_deposit": float(fee_from_deposit), "fee_balance": float(fee_from_balance),
             "start_date": fund_start_date
         }
         navigate_to("page2")
