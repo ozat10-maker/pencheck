@@ -81,75 +81,46 @@ def get_benchmark_returns():
             returns[asset] += effective_usd_drag
     return returns
 
-def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
-    """מתוקן סופית: מושך חודש שלם ומסנן באופן קשיח רק ימים מה-1 לחודש הנוכחי ומעלה"""
+def get_ytd_benchmark_returns():
+    """מחשב את תשואות המדדים והדולר מה-1 בינואר של השנה הנוכחית (YTD)"""
+    returns = {}
     today = datetime.now()
-    first_of_this_month = datetime(today.year, today.month, 1).date()
-    daily_series = {}
+    start_of_year = datetime(today.year, 1, 1).strftime('%Y-%m-%d')
     
     for name, ticker in BENCHMARKS.items():
         try:
-            df = yf.Ticker(ticker).history(period="1mo")
-            if not df.empty:
-                daily_series[name] = df['Close']
+            hist = yf.Ticker(ticker).history(start=start_of_year)
+            if not hist.empty and len(hist) >= 2:
+                initial_price = float(hist['Close'].iloc[0])
+                current_price = float(hist['Close'].iloc[-1])
+                returns[name] = ((current_price - initial_price) / initial_price) * 100
+            else:
+                returns[name] = 0.0
         except:
-            pass
+            returns[name] = 0.0
             
-    if not daily_series or "S&P 500" not in daily_series:
-        return pd.DataFrame()
-        
-    all_dates = daily_series["S&P 500"].index
-    filtered_dates = [d for d in all_dates if d.date() >= first_of_this_month]
-    
-    if not filtered_dates:
-        return pd.DataFrame()
-        
-    portfolio_daily_cumulative = []
-    date_labels = []
-    
-    usd_series = pd.Series(dtype='float64')
+    usd_effect = 0.0
     try:
-        usd_df = yf.Ticker("ILS=X").history(period="1mo")
-        if not usd_df.empty:
-            usd_series = usd_df['Close']
+        usd_hist = yf.Ticker("ILS=X").history(start=start_of_year)
+        if not usd_hist.empty and len(usd_hist) >= 2:
+            usd_initial = float(usd_hist['Close'].iloc[0])
+            usd_current = float(usd_hist['Close'].iloc[-1])
+            usd_effect = ((usd_current - usd_initial) / usd_initial) * 100
     except:
         pass
+        
+    fx_multiplier = st.session_state.institutional_fx_exposure / 100.0
+    effective_usd_drag = usd_effect * fx_multiplier
+    
+    usd_exposed_assets = ["S&P 500", "Nasdaq 100"]
+    for asset in usd_exposed_assets:
+        if asset in returns:
+            returns[asset] += effective_usd_drag
+    return returns
 
-    first_valid_date = filtered_dates[0]
-
-    for date in filtered_dates:
-        daily_gross_return = 0.0
-        usd_cum_change = 0.0
-        
-        if not usd_series.empty:
-            try:
-                usd_initial = usd_series.asof(first_valid_date)
-                usd_current_day = usd_series.asof(date)
-                usd_cum_change = ((usd_current_day - usd_initial) / usd_initial) * 100
-            except:
-                usd_cum_change = 0.0
-            
-        effective_usd_day_drag = usd_cum_change * (fx_exposure_pct / 100.0)
-        
-        for asset, weight in mix_data.items():
-            if asset in daily_series:
-                asset_prices = daily_series[asset]
-                try:
-                    initial_p = asset_prices.asof(first_valid_date)
-                    current_p = asset_prices.asof(date)
-                    
-                    asset_cum_return = ((current_p - initial_p) / initial_p) * 100
-                    if asset in ["S&P 500", "Nasdaq 100"]:
-                        asset_cum_return += effective_usd_day_drag
-                        
-                    daily_gross_return += asset_cum_return * (weight / 100.0)
-                except:
-                    pass
-                
-        portfolio_daily_cumulative.append(daily_gross_return)
-        date_labels.append(date.strftime('%m-%d'))
-        
-    return pd.DataFrame({"Date": date_labels, "Return": portfolio_daily_cumulative})
+def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
+    """הושבת זמנית בהתאם לבקשת המשתמש"""
+    return pd.DataFrame()
 
 def get_historical_tracks_returns(chosen_tracks, available_tracks):
     """מחשב תשואות היסטוריות קלנדריות מדויקות לפי חודשים קלנדריים סגורים"""
@@ -445,43 +416,30 @@ elif st.session_state.pension_page == "analysis":
         
     st.write("---")
     
-    with st.spinner("מחשב נתונים בזמן אמת..."): 
+    with st.spinner("מחשב נתונים בזמן אמת מהבורסה..."): 
         try:
             benchmark_returns = get_benchmark_returns()
             total_gross_return = sum(benchmark_returns.get(asset, 0.0) * (weight / 100) for asset, weight in st.session_state.mix_data.items())
-            
             total_monthly_fees_nis = (u["monthly_deposit"] * (u["fee_deposit"] / 100)) + (u["balance"] * ((u["fee_balance"] / 100) / 12))
-            
             total_net_return = total_gross_return - ((total_monthly_fees_nis / u["balance"]) * 100 if u["balance"] > 0 else 0.0)
             money_change_net = u["balance"] * (total_net_return / 100)
+            
+            ytd_benchmarks = get_ytd_benchmark_returns()
+            total_ytd_gross_return = sum(ytd_benchmarks.get(asset, 0.0) * (weight / 100) for asset, weight in st.session_state.mix_data.items())
         except Exception as calc_error:
             st.error(f"שגיאה בחישוב הנתונים: {str(calc_error)}")
-            total_net_return, total_monthly_fees_nis, money_change_net = 0.0, 0.0, 0.0
+            total_net_return, total_monthly_fees_nis, money_change_net, total_ytd_gross_return = 0.0, 0.0, 0.0, 0.0
             
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("תשואה מוערכת (נטו החודש)", f"{total_net_return:+.2f}%")
-    m2.metric("דמי ניהול (כסף כללי החודש)", f"{total_monthly_fees_nis:,.2f} ₪")
-    m3.metric("שינוי כספי מוערך (נטו)", f"{money_change_net:+,.2f} ₪")
-    m4.metric("שווי תיק מעודכן", f"{u['balance'] + money_change_net:,.2f} ₪")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("תשואה מוערכת (חודשית נטו)", f"{total_net_return:+.2f}%")
+    m2.metric("תשואה מתחילת שנה (מוערכת גולמית)", f"{total_ytd_gross_return:+.2f}%")
+    m3.metric("דמי ניהול (החודש בש\"ח)", f"{total_monthly_fees_nis:,.2f} ₪")
+    m4.metric("שינוי כספי מוערך (נטו החודש)", f"{money_change_net:+,.2f} ₪")
+    m5.metric("שווי תיק מעודכן", f"{u['balance'] + money_change_net:,.2f} ₪")
+    
+    st.caption("⚠️ **הערה חשובה:** התשואות המוצגות (הן החודשית והן מתחילת השנה) הן משוערכות בלבד ומבוססות על נכסי הבסיס. חישוב זה תקף ומהימן אך ורק בתנאי שהחוסך לא ביצע שינויים או מעברי מסלולים במהלך תקופת החישוב הרלוונטית.")
     
     st.write("---")
-    st.write("### הגרף היומי המצטבר מתחילת החודש ועד היום (%)")
-    
-    with st.spinner("מייצר גרף ביצועים יומי..."): 
-        daily_chart_df = get_daily_returns_chart_data(st.session_state.mix_data, st.session_state.institutional_fx_exposure)
-        if not daily_chart_df.empty:
-            fig_daily_perf = px.line(
-                daily_chart_df, x="Date", y="Return", 
-                title="Portfolio Cumulative Performance (Month-to-Date)", markers=True
-            )
-            fig_daily_perf.update_layout(
-                yaxis_title="Cumulative Return (%)", xaxis_title="Date (MM-DD)",
-                yaxis_tickformat="+.2f%"
-            )
-            st.plotly_chart(fig_daily_perf, use_container_width=True)
-        else:
-            st.info("נתוני מסחר יומיים אינם זמינים כעת בגלל סוף שבוע או בעיית תקשורת.")
-            
     st.write("### היסטוריית תשואות משוקללת של מסלולי הקופה (3 חודשים סגורים אחרונים)")
     try:
         if product_type == "קרן פנסיה":
@@ -512,12 +470,12 @@ elif st.session_state.pension_page == "analysis":
             
             user_context = (
                 f"Product: {product_type}, Company: {u['company']}, Split Tracks: {u['fund']}, "
-                f"Balance: {u['balance']} NIS, Combined Net Return: {total_net_return:.2f}%, History: {history_data}, "
+                f"Balance: {u['balance']} NIS, Combined Net Return: {total_net_return:.2f}%, YTD Return: {total_ytd_gross_return:.2f}%, History: {history_data}, "
                 f"Estimated Institutional FX Exposure: {st.session_state.institutional_fx_exposure}%"
             )
             
             system_instruction = (
-                f"אתה מומחה פיננסי בכיר ומנהל השקעות ישראלי. נתח את ביצועי החודש וההיסטוריה של מוצר החיסכון: {product_type}. "
+                f"אתה מומחה פיננסי בכיר ומנהל השקעות ישראלי. נתח את ביצועי החודש, התשואה מתחילת השנה ({total_ytd_gross_return:.2f}%) וההיסטוריה של מוצר החיסכון: {product_type}. "
                 f"התייחס ספציפית לתמהיל הנכסים, דמי הניהול שנבחרו, והשפעת חשיפת המט''ח/הגידור השקלי שחושבה (ILS=X). "
                 f"ספק דוח מקצועי, חד, ומנומק היטב המיועד לחוסך. הדוח חייב להיכתב בשפה העברית בלבד ובמבנה קריא עם בולטים."
             )
