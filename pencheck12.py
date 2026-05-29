@@ -3,13 +3,13 @@ import yfinance as yf
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
-import google.generativeai as genai
+# יבוא מודרני מותאם למנוע ה-Client של Gemini 2.5
+from google import genai
 from google.genai import types
 
-# הגדרת תצורת העמוד הראשי של האפליקציה
-st.set_page_config(page_title="מערכת AI לניהול פנסיה, השתלמות וגמל", page_icon="💰", layout="wide")
+st.set_page_config(page_title="מערכת AI לניהול פנסיה, השתלמות וגמל", page_icon="📈", layout="wide")
 
-# אתחול משתני ה-Session State לניהול המעבר בין הדפים והשלבים
+# אתחול משתני ה-Session State לניהול המעבר בין הדפים
 if "pension_page" not in st.session_state:
     st.session_state.pension_page = "page1"
 if "product_type" not in st.session_state:
@@ -27,19 +27,23 @@ def navigate_to(page_name):
 
 st.sidebar.header("⚙️ הגדרות מערכת ה-AI")
 
-# ניהול מפתח ה-API של Gemini בצורה מאובטחת
 DEFAULT_GEMINI_KEY = "" 
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
-    st.sidebar.success("✅ מפתח API נטען אוטומטית מ-Secrets")
+    st.sidebar.success("✔️ מפתח API נטען אוטומטית")
 elif DEFAULT_GEMINI_KEY and DEFAULT_GEMINI_KEY.strip() != "":
     api_key = DEFAULT_GEMINI_KEY
-    st.sidebar.success("✅ מפתח API קבוע נטען בהצלחה")
+    st.sidebar.success("✔️ מפתח API נטען קבוע")
 else:
     api_key = st.sidebar.text_input("הזן מפתח API של Gemini:", type="password")
-# ---------------------------------------------------------------------
-# מאגר נתונים 1: מסלולי קרנות פנסיה
-# ---------------------------------------------------------------------
+BENCHMARKS = {
+    "S&P 500": "^SPX", 
+    "TA 125": "^TA125.TA", 
+    "Nasdaq 100": "^NDX", 
+    "Bonds": "AGG", 
+    "Cash": "BIL"
+}
+
 PENSION_REGISTRY = {
     "הראל פנסיה": {
         "מסלול מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0},
@@ -56,9 +60,6 @@ PENSION_REGISTRY = {
     }
 }
 
-# ---------------------------------------------------------------------
-# מאגר נתונים 2: מסלולי קרנות השתלמות
-# ---------------------------------------------------------------------
 TRAINING_FUND_REGISTRY = {
     "הראל השתלמות": {
         "הראל השתלמות מניות": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
@@ -76,67 +77,52 @@ TRAINING_FUND_REGISTRY = {
     }
 }
 
-# ---------------------------------------------------------------------
-# מאגר נתונים 3: כל מסלולי קופות גמל להשקעה בישראל
-# ---------------------------------------------------------------------
 INVESTMENT_PROVIDENT_REGISTRY = {
     "אנליסט גמל להשקעה": {
         "מסלול מניות": {"components": {"S&P 500": 55, "TA 125": 20, "Nasdaq 100": 25, "Bonds": 0, "Cash": 0}, "default_fx": 55.0},
         "מסלול כללי": {"components": {"S&P 500": 30, "TA 125": 25, "Nasdaq 100": 15, "Bonds": 20, "Cash": 10}, "default_fx": 30.0},
         "מסלול עוקב מדדים - גמיש": {"components": {"S&P 500": 45, "TA 125": 15, "Nasdaq 100": 40, "Bonds": 0, "Cash": 0}, "default_fx": 60.0},
-        "מסלול אשראי ואג\"ח": {"components": {"S&P 500": 0, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 85, "Cash": 15}, "default_fx": 5.0},
+        "מסלול אשראי ואג\"ח": {"components": {"S&P 500": 0, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 85, "Cash": 15}, "default_fx": 5.0}
     },
     "הראל גמל להשקעה": {
         "מסלול מניות": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
         "מסלול כללי": {"components": {"S&P 500": 25, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0},
-        "מסלול עוקב מדדים גמיש": {"components": {"S&P 500": 40, "TA 125": 20, "Nasdaq 100": 30, "Bonds": 5, "Cash": 5}, "default_fx": 50.0},
+        "מסלול עוקב מדדים גמיש": {"components": {"S&P 500": 40, "TA 125": 20, "Nasdaq 100": 30, "Bonds": 5, "Cash": 5}, "default_fx": 50.0}
     },
     "אלטשולר שחם גמל להשקעה": {
         "מסלול מניות": {"components": {"S&P 500": 55, "TA 125": 15, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 65.0},
         "מסלול כללי": {"components": {"S&P 500": 28, "TA 125": 18, "Nasdaq 100": 14, "Bonds": 30, "Cash": 10}, "default_fx": 35.0},
-        "מסלול כספי": {"components": {"S&P 500": 0, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 100}, "default_fx": 0.0},
+        "מסלול כספי": {"components": {"S&P 500": 0, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 100}, "default_fx": 0.0}
     },
     "ילין לפידות גמל להשקעה": {
         "מסלול מניות": {"components": {"S&P 500": 40, "TA 125": 35, "Nasdaq 100": 15, "Bonds": 5, "Cash": 5}, "default_fx": 35.0},
-        "מסלול כללי": {"components": {"S&P 500": 18, "TA 125": 25, "Nasdaq 100": 7, "Bonds": 40, "Cash": 10}, "default_fx": 20.0},
+        "מסלול כללי": {"components": {"S&P 500": 18, "TA 125": 25, "Nasdaq 100": 7, "Bonds": 40, "Cash": 10}, "default_fx": 20.0}
     },
     "מיטב גמל להשקעה": {
         "מסלול מניות": {"components": {"S&P 500": 50, "TA 125": 15, "Nasdaq 100": 25, "Bonds": 5, "Cash": 5}, "default_fx": 55.0},
         "מסלול עוקב מדדים גמיש": {"components": {"S&P 500": 45, "TA 125": 10, "Nasdaq 100": 45, "Bonds": 0, "Cash": 0}, "default_fx": 65.0},
-        "מסלול כללי": {"components": {"S&P 500": 25, "TA 125": 20, "Nasdaq 100": 15, "Bonds": 30, "Cash": 10}, "default_fx": 30.0},
+        "מסלול כללי": {"components": {"S&P 500": 25, "TA 125": 20, "Nasdaq 100": 15, "Bonds": 30, "Cash": 10}, "default_fx": 30.0}
     },
     "מור גמל להשקעה": {
         "מסלול מניות": {"components": {"S&P 500": 45, "TA 125": 25, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
         "מסלול כללי גמיש": {"components": {"S&P 500": 30, "TA 125": 20, "Nasdaq 100": 15, "Bonds": 25, "Cash": 10}, "default_fx": 35.0},
-        "מסלול עוקב מדדים": {"components": {"S&P 500": 50, "TA 125": 15, "Nasdaq 100": 35, "Bonds": 0, "Cash": 0}, "default_fx": 60.0},
+        "מסלול עוקב מדדים": {"components": {"S&P 500": 50, "TA 125": 15, "Nasdaq 100": 35, "Bonds": 0, "Cash": 0}, "default_fx": 60.0}
     },
     "מגדל גמל להשקעה": {
         "מסלול מנייתי": {"components": {"S&P 500": 45, "TA 125": 20, "Nasdaq 100": 25, "Bonds": 5, "Cash": 5}, "default_fx": 50.0},
         "מסלול מחקה S&P 500": {"components": {"S&P 500": 100, "TA 125": 0, "Nasdaq 100": 0, "Bonds": 0, "Cash": 0}, "default_fx": 40.0},
-        "מסלול כללי": {"components": {"S&P 500": 22, "TA 125": 23, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0},
+        "מסלול כללי": {"components": {"S&P 500": 22, "TA 125": 23, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0}
     },
     "כלל גמל להשקעה": {
         "מסלול מניות": {"components": {"S&P 500": 48, "TA 125": 22, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
-        "מסלול כללי": {"components": {"S&P 500": 24, "TA 125": 21, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0},
+        "מסלול כללי": {"components": {"S&P 500": 24, "TA 125": 21, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0}
     },
     "מנורה מבטחים גמל להשקעה": {
         "מסלול מניות": {"components": {"S&P 500": 50, "TA 125": 20, "Nasdaq 100": 20, "Bonds": 5, "Cash": 5}, "default_fx": 45.0},
         "מסלול כללי": {"components": {"S&P 500": 25, "TA 125": 20, "Nasdaq 100": 10, "Bonds": 35, "Cash": 10}, "default_fx": 25.0}
     }
 }
-
-BENCHMARKS = {
-    "S&P 500": "^SPX",
-    "TA 125": "^TA125.TA",
-    "Nasdaq 100": "^NDX",
-    "Bonds": "AGG",
-    "Cash": "BIL"
-}
 def get_benchmark_returns():
-    """
-    מחשב את תשואות נכסי הבסיס בדיוק מה-1 לחודש הנוכחי ועד היום,
-    ומשקלל את השפעת שינוי שער הדולר השקלי בצורה ישירה.
-    """
     returns = {}
     today = datetime.now()
     start_of_month = datetime(today.year, today.month, 1).strftime('%Y-%m-%d')
@@ -166,18 +152,13 @@ def get_benchmark_returns():
     fx_multiplier = st.session_state.institutional_fx_exposure / 100.0
     effective_usd_drag = usd_effect * fx_multiplier
     
-    usd_exposed_assets = ["S&P 500", "Nasdaq 100"]
-    for asset in usd_exposed_assets:
+    for asset in ["S&P 500", "Nasdaq 100"]:
         if asset in returns:
             returns[asset] += effective_usd_drag
             
     return returns
 
 def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
-    """
-    בונה קו תשואה יומי מצטבר (%) של תיק ההשקעות מתחילת החודש הנוכחי ועד היום
-    תוך התחשבות במשקלי המדדים ורמת חשיפת המט"ח.
-    """
     today = datetime.now()
     start_of_month = datetime(today.year, today.month, 1).strftime('%Y-%m-%d')
     daily_series = {}
@@ -197,14 +178,18 @@ def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
     portfolio_daily_cumulative = []
     date_labels = []
     
+    try:
+        usd_df = yf.Ticker("ILS=X").history(start=start_of_month)
+        usd_initial = usd_df['Close'].iloc[0]
+    except:
+        usd_initial = 1.0
+
     for idx, date in enumerate(dates):
         daily_gross_return = 0.0
         usd_cum_change = 0.0
         
         try:
-            usd_df = yf.Ticker("ILS=X").history(start=start_of_month)
-            if not usd_df.empty:
-                usd_initial = usd_df['Close'].iloc[0]
+            if 'usd_df' in locals() and not usd_df.empty:
                 usd_current_day = usd_df['Close'].asof(date)
                 usd_cum_change = ((usd_current_day - usd_initial) / usd_initial) * 100
         except:
@@ -221,7 +206,7 @@ def get_daily_returns_chart_data(mix_data, fx_exposure_pct):
                 asset_cum_return = ((current_p - initial_p) / initial_p) * 100
                 if asset in ["S&P 500", "Nasdaq 100"]:
                     asset_cum_return += effective_usd_day_drag
-                    
+                
                 daily_gross_return += asset_cum_return * (weight / 100.0)
                 
         portfolio_daily_cumulative.append(daily_gross_return)
@@ -285,7 +270,7 @@ def get_historical_tracks_returns(chosen_tracks, available_tracks):
         
     return data_list
 
-# ניהול שורת ההתקדמות העליונה קבועה לפי הסטטוס
+# הגדרת בר התקדמות עליון קבוע
 if st.session_state.pension_page == "page1": 
     st.progress(25, text="שלב 1 מתוך 4: פרטי החוסך ומוצר")
 elif st.session_state.pension_page == "page2": 
@@ -293,102 +278,65 @@ elif st.session_state.pension_page == "page2":
 elif st.session_state.pension_page == "analysis": 
     st.progress(75, text="שלב 3 מתוך 4: מנוע ניתוח ודוח AI")
 elif st.session_state.pension_page == "projection": 
-    st.progress(100, text="שלב 4 מתוך 4: סימולציית צמיחת הון")
+    st.progress(100, text="שלב 4 מתוך 4: סימולציית גיל פרישה וצמיחה")
 st.write("---")
 # =====================================================================
-# שלב 1 - בחירת מוצר ונתוני קופה
+# חלק 4: דף 3 - מנוע ניתוח ביצועי קופה וגרף יומי מצטבר
 # =====================================================================
-if st.session_state.pension_page == "page1":
-    st.title("שלב 1: בחירת מוצר ונתוני קופה")
-    
-    product_options = ["קרן פנסיה", "קרן השתלמות", "קופת גמל להשקעה"]
-    saved_product = st.session_state.get("product_type", "קרן פנסיה")
-    default_product_idx = product_options.index(saved_product) if saved_product in product_options else 0
-    
-    product_type = st.radio("בחר את סוג המוצר הפיננסי לניתוח:", product_options, index=default_product_idx, horizontal=True)
-    st.session_state.product_type = product_type
-    
-    saved_info = st.session_state.user_info
-    col1, col2 = st.columns(2)
-    
-    if product_type == "קרן פנסיה":
-        company_list = list(PENSION_REGISTRY.keys())
-    elif product_type == "קרן השתלמות":
-        company_list = list(TRAINING_FUND_REGISTRY.keys())
-    else:
-        company_list = list(INVESTMENT_PROVIDENT_REGISTRY.keys())
+elif st.session_state.pension_page == "analysis":
+    if not st.session_state.mix_data: 
+        navigate_to("page1")
         
-    with col1:
-        default_company_idx = company_list.index(saved_info["company"]) if "company" in saved_info and saved_info["company"] in company_list else 0
-        company_name = st.selectbox("שם החברה המנהלת:", company_list, index=default_company_idx)
-        
-        if product_type == "קרן פנסיה":
-            user_age = st.number_input("גיל המשתמש הנוכחי:", min_value=18, max_value=100, value=saved_info.get("age", 30))
-            fund_start_date = None
-        elif product_type == "קרן השתלמות":
-            user_age = 30
-            default_date = saved_info.get("start_date", datetime.now() - timedelta(days=365*3))
-            fund_start_date = st.date_input("תאריך תחילת ההפקדות (פתיחת הקופה):", value=default_date)
-        else:
-            user_age = 30
-            fund_start_date = None
-            
-        total_balance = st.number_input("יתרה צבורה בתחילת החודש (ש\"ח):", min_value=0, value=saved_info.get("balance", 100000), step=10000)
-
-    with col2:
-        if product_type == "קרן פנסיה":
-            st.markdown("**נתוני שכר והפקדות חודשיות**")
-            current_salary = st.number_input("משכורת חודשית ברוטו נוכחית (בש\"ח):", min_value=0, value=saved_info.get("current_salary", 15000), step=1000)
-            target_salary = st.number_input("משכורת חודשית משוערת לקראת הפרישה (בש\"ח):", min_value=0, value=saved_info.get("target_salary", 22000), step=1000)
-            suggested_deposit = int(current_salary * 0.185)
-            monthly_deposit = st.number_input("סך הפקדה חודשית נוכחית לקופה (ברוטו בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", suggested_deposit), step=100)
-        elif product_type == "קרן השתלמות":
-            st.markdown("**נתוני הפקדות לקרן השתלמות**")
-            monthly_deposit = st.number_input("סך הפקדה חודשית משולבת לקופה (עובד + מעביד בש\"ח):", min_value=0, value=saved_info.get("monthly_deposit", 1500), step=100)
-            current_salary = 0.0
-            target_salary = 0.0
-        else:
-            monthly_deposit = 0.0
-            current_salary = 0.0
-            target_salary = 0.0
-            st.info("💡 בקופת גמל להשקעה הניתוח מבוסס על היתרה הקיימת וביצועי השוק החודשיים בלבד.")
-
-        st.markdown("**דמי ניהול נוכחיים**")
-        sub_c1, sub_c2 = st.columns(2)
-        
-        if product_type == "קופת גמל להשקעה":
-            default_fee_dep = 0.0
-            default_fee_bal = 0.65
-        else:
-            default_fee_dep = 0.0 if product_type == "קרן השתלמות" else 1.5
-            default_fee_bal = 0.50 if product_type == "קרן השתלמות" else 0.22
-            
-        fee_from_deposit = sub_c1.number_input("דמי ניהול מהפקדה (%):", min_value=0.0, max_value=6.0, value=saved_info.get("fee_deposit", default_fee_dep), step=0.1, disabled=(product_type == "קופת גמל להשקעה"))
-        fee_from_balance = sub_c2.number_input("דמי ניהול שנתיים מצבירה (%):", min_value=0.0, max_value=2.0, value=saved_info.get("fee_balance", default_fee_bal), step=0.01)
-
-    st.write("---")
-    if st.button("המשך לבחירת מסלולי ההשקעה", type="primary"):
-        st.session_state.user_info = {
-            "company": company_name, "age": user_age, "balance": total_balance,
-            "current_salary": current_salary, "target_salary": target_salary,
-            "monthly_deposit": monthly_deposit, "fee_deposit": fee_from_deposit, "fee_balance": fee_from_balance,
-            "start_date": fund_start_date
-        }
-        navigate_to("page2")
-# =====================================================================
-# שלב 2 ושלב 3 - פילוח מסלולים וביצועים בזמן אמת
-# =====================================================================
-elif st.session_state.pension_page == "page2":
-    selected_company = st.session_state.user_info["company"]
     product_type = st.session_state.product_type
+    st.title(f"מנוע ניתוח ביצועי {product_type} ודוח AI")
     
-    st.title("שלב 2: הגדרת חלוקת מסלולים משולבת")
-    st.write(f"סוג קופה: **{product_type}** | חברה מנהלת: **{selected_company}**")
+    u = st.session_state.user_info
+    st.subheader(f"אומדן ביצועים עבור: {u['fund']} ({u['company']})")
     
-    if product_type == "קרן פנסיה":
-        available_tracks = PENSION_REGISTRY[selected_company]
-    elif product_type == "קרן השתלמות":
-        available_tracks = TRAINING_FUND_REGISTRY[selected
+    if st.button("חזור לעריכת תמהיל התיק"): 
+        navigate_to("page2")
+        
+    st.write("---")
+    
+    with st.spinner("מחשב נתונים בזמן אמת..."): 
+        try:
+            benchmark_returns = get_benchmark_returns()
+            total_gross_return = sum(benchmark_returns.get(asset, 0.0) * (weight / 100) for asset, weight in st.session_state.mix_data.items())
+            
+            # חישוב דמי ניהול חודשיים יחסיים (מהפקדה + מהצבירה חלקי 12 חודשים)
+            total_monthly_fees_nis = (u["monthly_deposit"] * (u["fee_deposit"] / 100)) + (u["balance"] * ((u["fee_balance"] / 100) / 12))
+            
+            # חישוב תשואה נטו באחוזים
+            total_net_return = total_gross_return - ((total_monthly_fees_nis / u["balance"]) * 100 if u["balance"] > 0 else 0.0)
+            money_change_net = u["balance"] * (total_net_return / 100)
+        except Exception as calc_error:
+            st.error(f"שגיאה בחישוב הנתונים: {str(calc_error)}")
+            total_net_return, total_monthly_fees_nis, money_change_net = 0.0, 0.0, 0.0
+            
+    # תצוגת המטריקות לחודש הנוכחי
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("תשואה מוערכת (נטו החודש)", f"{total_net_return:+.2f}%")
+    m2.metric("דמי ניהול (כסף כללי החודש)", f"{total_monthly_fees_nis:,.2f} ₪")
+    m3.metric("שינוי כספי מוערך (נטו)", f"{money_change_net:+,.2f} ₪")
+    m4.metric("שווי תיק מעודכן", f"{u['balance'] + money_change_net:,.2f} ₪")
+    
+    st.write("---")
+    st.write("### הגרף היומי המצטבר מתחילת החודש ועד היום (%)")
+    
+    with st.spinner("מייצר גרף ביצועים יומי..."): 
+        daily_chart_df = get_daily_returns_chart_data(st.session_state.mix_data, st.session_state.institutional_fx_exposure)
+        if not daily_chart_df.empty:
+            fig_daily_perf = px.line(
+                daily_chart_df, x="Date", y="Return", 
+                title="Portfolio Cumulative Performance (Month-to-Date)", markers=True
+            )
+            fig_daily_perf.update_layout(
+                yaxis_title="Cumulative Return (%)", xaxis_title="Date (MM-DD)",
+                yaxis_tickformat="+.2f%"
+            )
+            st.plotly_chart(fig_daily_perf, use_container_width=True)
+        else:
+            st.info(".נתוני מסחר יומיים אינם זמינים כעת בגלל סוף שבוע או בעיית תקשורת")
 # =====================================================================
 # חלק 5: שלב 3 - הצגת טבלה היסטורית והפקת דוח AI
 # =====================================================================
@@ -488,18 +436,18 @@ elif st.session_state.pension_page == "projection":
             
             today_date = datetime.now().date()
             months_passed = (today_date.year - start_date.year) * 12 + (today_date.month - start_date.month)
-            months_to_liquidity = max(0, 72 - months_passed) # 72 חודשים = 6 שנים לנזילות
+            months_to_liquidity = max(0, 72 - months_passed)
             years_to_simulate = round(months_to_liquidity / 12, 2)
         else:
             years_to_simulate = 6
             
         if years_to_simulate > 0:
-            st.success(f"📅 הקופה נפתחה ב-{start_date.strftime('%d/%m/%Y') if start_date else 'עבר'}. נותרו כ-{months_to_liquidity} חודשים (כ-{years_to_simulate} שנים) לנזילות מלאה פפורה ממס.")
+            st.success(f"📅 הקופה נפתחה ב-{start_date.strftime('%d/%m/%Y') if start_date else 'עבר'}. נותרו כ-{months_to_liquidity} חודשים (כ-{years_to_simulate} שנים) לנזילות מלאה פטורה ממס.")
         else:
             st.success("🎉 הקופה ותיקה ונזילה לחלוטין! (פתחת אותה לפני יותר מ-6 שנים). הסימולציה מציגה צפי צמיחה ל-6 השנים הבאות.")
             years_to_simulate = 6
             
-        target_title = "🎯 תוצאות שיערוך הון פפור ממס בנקודת הנזילות המלאה"
+        target_title = "🎯 תוצאות שיערוך הון פטור ממס בנקודת הנזילות המלאה"
     else:
         # קופת גמל להשקעה - סימולציית צמיחה קבועה ל-10 שנים בהתאם לאפיון
         years_to_simulate = 10
@@ -508,7 +456,6 @@ elif st.session_state.pension_page == "projection":
     if years_to_simulate <= 0: 
         st.warning("⚠️ היעד הושג. נתוני הסימולציה אינם יכולים לרוץ לאחור.")
     else:
-        # חישוב שיעור גידול השכר השנתי (רלוונטי רק לפנסיה)
         if product_type == "קרן פנסיה" and u["target_salary"] > u["current_salary"]:
             salary_growth_rate = (u["target_salary"] / u["current_salary"]) ** (1 / years_to_simulate) - 1
         else:
@@ -517,7 +464,6 @@ elif st.session_state.pension_page == "projection":
         if product_type == "קרן פנסיה" and salary_growth_rate > 0:
             st.info(f"📈 מודל הסימולציה מניח קידום שכר שנתי ממוצע של {salary_growth_rate*100:.2f}%")
             
-        # חישוב תשואה ארוכת טווח משוקללת לפי נכסי הבסיס שנבחרו בתמהיל
         mix = st.session_state.mix_data
         calculated_longterm_return = (
             (mix.get("S&P 500", 0.0) * 8.5) + 
@@ -556,22 +502,18 @@ elif st.session_state.pension_page == "projection":
         fee_balance_rate = u["fee_balance"] / 100
         return_rate = annual_return_input / 100
         
-        # תוקן: הגדרת מערך השנים בצורה מלאה ותקינה לשלושת המוצרים
         age_axis = [u["age"]] if product_type == "קרן פנסיה" else [0]
         balance_axis = [round(balance)]
         salary_axis = [round(u["current_salary"])]
         active_salary = u["current_salary"]
         
-        # עיגול כלפי מעלה של השנים לצורך ריצה נכונה בלולאה קלנדרית
         loop_years = int(years_to_simulate + 0.99)
         for year in range(1, loop_years + 1):
             active_salary *= (1 + salary_growth_rate)
             annual_deposit = u["monthly_deposit"] * 12
             net_annual_deposit = annual_deposit * (1 - fee_deposit_rate)
             
-            # חישוב ריבית דריבית שנתית + הפקדות נטו
             balance = (balance * (1 + return_rate)) + net_annual_deposit
-            # ניכוי דמי ניהול שנתיים מהצבירה
             balance *= (1 - fee_balance_rate)
             
             if product_type == "קרן פנסיה":
